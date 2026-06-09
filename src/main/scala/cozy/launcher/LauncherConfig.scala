@@ -1,0 +1,223 @@
+package cozy.launcher
+
+import java.nio.charset.StandardCharsets
+import java.nio.file.{Files, Path}
+
+/*
+ * @since   Jun.  9, 2026
+ * @version Jun.  9, 2026
+ * @author  ASAMI, Tomoharu
+ */
+final case class LauncherConfig(
+  launcherDevDir: Option[String] = None,
+  runtimeVersion: Option[String] = None,
+  runtimeDevDir: Option[String] = None,
+  mavenRepositories: Vector[String] = Vector.empty,
+  coursierRepositories: Vector[String] = Vector.empty
+) {
+  def mergeHigher(higher: LauncherConfig): LauncherConfig =
+    LauncherConfig(
+      launcherDevDir = higher.launcherDevDir.orElse(launcherDevDir),
+      runtimeVersion = higher.runtimeVersion.orElse(runtimeVersion),
+      runtimeDevDir = higher.runtimeDevDir.orElse(runtimeDevDir),
+      mavenRepositories = _merge_list(mavenRepositories, higher.mavenRepositories),
+      coursierRepositories = _merge_list(coursierRepositories, higher.coursierRepositories)
+    )
+
+  def normalizedWithDefaults: LauncherConfig =
+    copy(
+      mavenRepositories = _append_defaults(mavenRepositories, LauncherConfig.DEFAULT_MAVEN_REPOSITORIES),
+      coursierRepositories = _append_defaults(coursierRepositories, LauncherConfig.DEFAULT_COURSIER_REPOSITORIES)
+    )
+
+  private def _merge_list(
+    lower: Vector[String],
+    higher: Vector[String]
+  ): Vector[String] =
+    (higher ++ lower).distinct
+
+  private def _append_defaults(
+    configured: Vector[String],
+    defaults: Vector[String]
+  ): Vector[String] =
+    configured ++ defaults.filterNot(configured.contains)
+}
+
+object LauncherConfig {
+  val DEFAULT_RUNTIME_VERSION = "latest"
+  val DEFAULT_MAVEN_REPOSITORIES = Vector(
+    "https://www.simplemodeling.org/repository/maven",
+    "https://raw.github.com/asami/maven-repository/2020/releases",
+    "https://raw.github.com/asami/maven-repository/2025/releases",
+    "https://maven.pkg.github.com/asami/maven-repository"
+  )
+  val DEFAULT_COURSIER_REPOSITORIES = Vector("ivy2Local", "central")
+
+  def load(paths: LauncherPaths): LauncherConfig =
+    load(paths, Vector.empty)
+
+  def load(
+    paths: LauncherPaths,
+    configfiles: Vector[String]
+  ): LauncherConfig = {
+    val global = loadFile(paths.globalConfig)
+    val project = loadFile(paths.projectConfig)
+    val projectlocal = loadFile(paths.projectLocalConfig)
+    val base = LauncherConfig()
+      .mergeHigher(global)
+      .mergeHigher(project)
+      .mergeHigher(projectlocal)
+    val explicit = configfiles.foldLeft(base) { (acc, file) =>
+      acc.mergeHigher(loadRequiredFile(paths.cwd.resolve(file).normalize.toAbsolutePath.normalize))
+    }
+    explicit.normalizedWithDefaults
+  }
+
+  def loadFile(path: Path): LauncherConfig =
+    if (Files.isRegularFile(path)) {
+      val text = Files.readString(path, StandardCharsets.UTF_8)
+      fromParsed(LauncherConfigParser.parse(path, text))
+    } else {
+      LauncherConfig()
+    }
+
+  def loadRequiredFile(path: Path): LauncherConfig =
+    if (Files.isRegularFile(path))
+      loadFile(path)
+    else
+      throw CozyException(s"launcher config file not found: ${path}")
+
+  def fromParsed(values: Map[String, Vector[String]]): LauncherConfig = {
+    def _first_(keys: String*): Option[String] =
+      keys.toVector.flatMap(k => values.getOrElse(k, Vector.empty)).headOption.map(_.trim).filter(_.nonEmpty)
+    def _all_(keys: String*): Vector[String] =
+      keys.toVector.flatMap(k => values.getOrElse(k, Vector.empty)).map(_.trim).filter(_.nonEmpty).distinct
+
+    LauncherConfig(
+      launcherDevDir = _first_("cozy.launcher.dev.dir", "cozy.launcher.dev-dir", "cozy.launcher.devDir", "launcher.dev.dir", "launcher.dev-dir", "launcher.devDir"),
+      runtimeVersion = _first_("runtime.version", "cozy.runtime.version", "version"),
+      runtimeDevDir = _first_("runtime.dev-dir", "runtime.dev_dir", "runtime.devDir", "runtime.dev.dir", "cozy.runtime.dev-dir", "cozy.runtime.dev_dir", "cozy.runtime.devDir", "cozy.runtime.dev.dir"),
+      mavenRepositories = _all_("repositories.maven", "cozy.repository.maven"),
+      coursierRepositories = _all_("repositories.coursier", "cozy.repository.coursier")
+    )
+  }
+
+  def render(config: LauncherConfig): String = {
+    val c = config.normalizedWithDefaults
+    val runtime = c.runtimeVersion.getOrElse("(not configured)")
+    val runtimedevdir = c.runtimeDevDir.getOrElse("(not configured)")
+    val mavens = c.mavenRepositories.mkString(", ")
+    val coursiers = c.coursierRepositories.mkString(", ")
+    s"""runtime.version: $runtime
+       |runtime.devDir: $runtimedevdir
+       |repositories.maven: $mavens
+       |repositories.coursier: $coursiers""".stripMargin
+  }
+}
+
+object LauncherConfigParser {
+  def parse(
+    path: Path,
+    text: String
+  ): Map[String, Vector[String]] =
+    _file_type(path) match {
+      case "yaml" | "yml" => _parse_light_yaml(text)
+      case "properties" | "props" | "conf" => _parse_properties(text)
+      case other =>
+        throw CozyException(s"unsupported launcher config file type: .$other; use yaml, yml, properties, props, or conf")
+    }
+
+  private def _file_type(path: Path): String = {
+    val name = path.getFileName.toString
+    val i = name.lastIndexOf('.')
+    if (i >= 0 && i + 1 < name.length)
+      name.substring(i + 1).toLowerCase
+    else
+      "yaml"
+  }
+
+  private def _parse_properties(text: String): Map[String, Vector[String]] = {
+    var values = Map.empty[String, Vector[String]]
+    text.linesIterator.foreach { raw =>
+      val uncommented = _strip_comment(raw)
+      val trimmed = uncommented.trim
+      if (trimmed.nonEmpty) {
+        val idx = _key_value_index(trimmed)
+        if (idx >= 0) {
+          val key = trimmed.substring(0, idx).trim
+          val value = trimmed.substring(idx + 1).trim
+          _put_value(key, value, values).foreach(v => values = v)
+        }
+      }
+    }
+    values
+  }
+
+  private def _parse_light_yaml(text: String): Map[String, Vector[String]] = {
+    var values = Map.empty[String, Vector[String]]
+    var stack = Vector.empty[(Int, String)]
+    var pendingkey: Option[String] = None
+
+    def put(path: String, value: String): Unit =
+      _put_value(path, value, values).foreach(v => values = v)
+
+    text.linesIterator.foreach { raw =>
+      val uncommented = _strip_comment(raw)
+      if (uncommented.trim.nonEmpty) {
+        val indent = uncommented.takeWhile(_ == ' ').length
+        val trimmed = uncommented.trim
+        stack = stack.dropRight(stack.count(_._1 >= indent))
+        if (trimmed.startsWith("- ")) {
+          pendingkey.foreach(k => put(k, trimmed.drop(2)))
+        } else {
+          val idx = _key_value_index(trimmed)
+          if (idx >= 0) {
+            val key = trimmed.substring(0, idx).trim
+            val value = trimmed.substring(idx + 1).trim
+            val path = (stack.map(_._2) :+ key).mkString(".")
+            if (value.isEmpty) {
+              stack = stack :+ (indent, key)
+              pendingkey = Some(path)
+            } else {
+              put(path, value)
+              pendingkey = Some(path)
+            }
+          }
+        }
+      }
+    }
+    values
+  }
+
+  private def _put_value(
+    rawkey: String,
+    rawvalue: String,
+    values: Map[String, Vector[String]]
+  ): Option[Map[String, Vector[String]]] = {
+    val key = rawkey.trim
+    val value = _unquote(rawvalue.trim)
+    if (key.isEmpty || value.isEmpty)
+      None
+    else
+      Some(values.updated(key, values.getOrElse(key, Vector.empty) :+ value))
+  }
+
+  private def _strip_comment(line: String): String = {
+    val index = line.indexOf('#')
+    if (index >= 0) line.take(index) else line
+  }
+
+  private def _key_value_index(line: String): Int = {
+    val colon = line.indexOf(':')
+    val equals = line.indexOf('=')
+    if (colon < 0) equals
+    else if (equals < 0) colon
+    else math.min(colon, equals)
+  }
+
+  private def _unquote(value: String): String =
+    if (value.length >= 2 && ((value.head == '"' && value.last == '"') || (value.head == '\'' && value.last == '\'')))
+      value.substring(1, value.length - 1)
+    else
+      value
+}
