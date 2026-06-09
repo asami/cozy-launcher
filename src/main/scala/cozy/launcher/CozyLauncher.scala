@@ -137,7 +137,7 @@ final class CozyLauncher(
     catalogstore: RuntimeCatalogStore,
     config: LauncherConfig
   ): Unit =
-    if (_is_dynamic_runtime_selector(selector)) {
+    if (_is_dynamic_runtime_selector(selector) && !_is_dynamic_runtime_selector(current)) {
       val remoteversion =
         try Some(catalogstore.fetch(config).resolve(selector).version)
         catch {
