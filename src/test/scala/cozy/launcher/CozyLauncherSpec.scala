@@ -4,7 +4,7 @@ import java.nio.file.{Files, Path}
 
 /*
  * @since   Jun.  9, 2026
- * @version Jun.  9, 2026
+ * @version Jun. 10, 2026
  * @author  ASAMI, Tomoharu
  */
 object CozyLauncherSpec {
@@ -14,6 +14,8 @@ object CozyLauncherSpec {
     spec.launcherVersion()
     spec.configMerge()
     spec.configFileOptionOverridesProjectConfig()
+    spec.runtimeCatalogSelection()
+    spec.runtimeCatalogCommands()
     spec.runtimeVersionPrecedence()
     spec.runtimeUseWritesExpectedFiles()
     spec.runtimeUseAutoSelectsProjectWhenCozyDirectoryExists()
@@ -79,11 +81,14 @@ final class CozyLauncherSpec {
         |      dir: ../cozy-launcher
         |runtime:
         |  version: 0.2.20-SNAPSHOT
+        |  catalog:
+        |    url: https://project.example/cozy/runtime-catalog.yaml
         |  dev-dir: ../cozy
         |""".stripMargin)
     val config = LauncherConfig.load(paths)
     _assert_equals(config.launcherDevDir, Some("../cozy-launcher"))
     _assert_equals(config.runtimeVersion, Some("0.2.20-SNAPSHOT"))
+    _assert_equals(config.runtimeCatalogUrl, Some("https://project.example/cozy/runtime-catalog.yaml"))
     _assert_equals(config.runtimeDevDir, Some("../cozy"))
     assert(config.mavenRepositories.contains("https://global.example/maven"))
     assert(config.coursierRepositories.contains("projectRepo"))
@@ -99,6 +104,46 @@ final class CozyLauncherSpec {
     }
     _assert_equals(code, 0)
     _assert_equals(output.trim, "0.2.20-SNAPSHOT")
+  }
+
+  def runtimeCatalogSelection(): Unit = _with_temp_paths { paths =>
+    val catalogfile = paths.cwd.resolve("runtime-catalog.yaml")
+    _write(catalogfile, _catalog_text)
+    val config = LauncherConfig.fromParsed(Map("runtime.catalog.url" -> Vector(catalogfile.toString)))
+    val resolver = CoursierCozyRuntimeResolver()
+    _assert_equals(resolver.resolveVersion("recommended", config, paths), "0.2.20")
+    _assert_equals(resolver.resolveVersion("latest", config, paths), "0.2.20")
+    _assert_equals(resolver.resolveVersion("latest-stable", config, paths), "0.2.20")
+    _assert_equals(resolver.resolveVersion("latest-snapshot", config, paths), "0.2.21-SNAPSHOT")
+    _assert_equals(resolver.resolveVersion("newest", config, paths), "0.2.21-SNAPSHOT")
+  }
+
+  def runtimeCatalogCommands(): Unit = _with_temp_paths { paths =>
+    val catalogfile = paths.cwd.resolve("runtime-catalog.yaml")
+    _write(catalogfile, _catalog_text)
+    _write(paths.cwd.resolve(".cozy").resolve("launcher.yaml"),
+      s"""runtime:
+         |  catalog:
+         |    url: $catalogfile
+         |""".stripMargin)
+    val launcher = new CozyLauncher(paths, FakeResolver(), FakeInvoker())
+    val (showcode, showoutput) = _capture_stdout {
+      launcher.run(Vector("runtime", "catalog", "show"))
+    }
+    _assert_equals(showcode, 0)
+    assert(showoutput.contains("recommended: 0.2.20"))
+
+    val (channelscode, channelsoutput) = _capture_stdout {
+      launcher.run(Vector("runtime", "channels"))
+    }
+    _assert_equals(channelscode, 0)
+    assert(channelsoutput.contains("latest-stable: 0.2.20"))
+
+    val (listcode, listoutput) = _capture_stdout {
+      launcher.run(Vector("runtime", "remote", "list"))
+    }
+    _assert_equals(listcode, 0)
+    assert(listoutput.contains("0.2.21-SNAPSHOT"))
   }
 
   def runtimeVersionPrecedence(): Unit = _with_temp_paths { paths =>
@@ -133,7 +178,7 @@ final class CozyLauncherSpec {
     val invoker = FakeInvoker()
     val launcher = new CozyLauncher(paths, resolver, invoker)
     launcher.run(Vector("sbt-bridge", "v1", "--request", "/tmp/request.json"))
-    _assert_equals(resolver.resolvedClasspaths, Vector("latest"))
+    _assert_equals(resolver.resolvedClasspaths, Vector("recommended"))
     _assert_equals(invoker.lastArgs, Vector("sbt-bridge", "v1", "--request", "/tmp/request.json"))
   }
 
@@ -206,6 +251,37 @@ final class CozyLauncherSpec {
 
   private def _assert_equals[A](actual: A, expected: A): Unit =
     assert(actual == expected, s"expected=$expected actual=$actual")
+
+  private val _catalog_text: String =
+    """schemaVersion: 1
+      |generatedAt: 2026-06-10T00:00:00Z
+      |recommended: 0.2.20
+      |latestStable: 0.2.20
+      |latestSnapshot: 0.2.21-SNAPSHOT
+      |mavenRepositories:
+      |  - https://example.com/repository/maven
+      |coursierRepositories:
+      |  - central
+      |versions:
+      |  - version: 0.2.19
+      |    channel: stable
+      |    status: active
+      |    scalaBinaryVersion: "2.12"
+      |    module: org.simplemodeling:cozy_2.12:0.2.19
+      |    publishedAt: 2026-06-09T00:00:00Z
+      |  - version: 0.2.20
+      |    channel: stable
+      |    status: active
+      |    scalaBinaryVersion: "2.12"
+      |    module: org.simplemodeling:cozy_2.12:0.2.20
+      |    publishedAt: 2026-06-10T00:00:00Z
+      |  - version: 0.2.21-SNAPSHOT
+      |    channel: snapshot
+      |    status: active
+      |    scalaBinaryVersion: "2.12"
+      |    module: org.simplemodeling:cozy_2.12:0.2.21-SNAPSHOT
+      |    publishedAt: 2026-06-10T01:00:00Z
+      |""".stripMargin
 }
 
 final class FakeResolver(

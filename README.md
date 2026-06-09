@@ -15,17 +15,19 @@ cozy sbt-bridge v1 --request /tmp/request.json
 
 ```bash
 cozy runtime current
-cozy runtime use latest
+cozy runtime use recommended
 cozy runtime use latest-snapshot
 cozy runtime install 0.2.20-SNAPSHOT
 cozy runtime cache status
+cozy runtime catalog show
 ```
 
 Version selectors:
 
-- `latest` / `latest-stable`: newest non-SNAPSHOT version from Maven metadata
-- `latest-snapshot`: newest SNAPSHOT version from Maven metadata
-- `newest` / `recommended`: newest version from Maven metadata
+- `recommended`: operator-selected default runtime from the catalog.
+- `latest` / `latest-stable`: newest stable runtime in the catalog.
+- `latest-snapshot`: newest snapshot runtime in the catalog.
+- `newest`: newest enabled runtime across all catalog channels.
 
 Use `--runtime <version>` to override the selected runtime for one invocation:
 
@@ -56,7 +58,9 @@ Example:
 
 ```yaml
 runtime:
-  version: latest-snapshot
+  version: recommended
+  catalog:
+    url: https://www.simplemodeling.org/repository/cozy/runtime-catalog.yaml
   dev-dir: /path/to/cozy
 
 repositories:

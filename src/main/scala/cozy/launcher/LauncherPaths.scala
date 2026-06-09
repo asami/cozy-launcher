@@ -4,7 +4,7 @@ import java.nio.file.{Path, Paths}
 
 /*
  * @since   Jun.  9, 2026
- * @version Jun.  9, 2026
+ * @version Jun. 10, 2026
  * @author  ASAMI, Tomoharu
  */
 final case class LauncherPaths(
@@ -17,6 +17,7 @@ final case class LauncherPaths(
   val projectLocalConfig: Path = cwd.resolve(".cozy").resolve("launcher.yaml")
   val globalVersion: Path = cozyHome.resolve("version")
   val projectVersion: Path = cwd.resolve(".cozy").resolve("version")
+  val runtimeCatalog: Path = cozyHome.resolve("catalog").resolve("cozy").resolve("runtime-catalog.yaml")
   val runtimeRoot: Path = cozyHome.resolve("runtimes")
   val coursierCache: Path = cozyHome.resolve("cache").resolve("coursier")
 

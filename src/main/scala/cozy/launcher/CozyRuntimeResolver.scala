@@ -1,15 +1,13 @@
 package cozy.launcher
 
 import java.io.File
-import java.net.URI
 import java.nio.charset.StandardCharsets
 import java.nio.file.{Files, Path}
 import scala.sys.process.*
-import scala.util.Using
 
 /*
  * @since   Jun.  9, 2026
- * @version Jun.  9, 2026
+ * @version Jun. 10, 2026
  * @author  ASAMI, Tomoharu
  */
 trait CozyRuntimeResolver {
@@ -23,21 +21,38 @@ final class CoursierCozyRuntimeResolver(
   coursiercommand: String = sys.env.getOrElse("COZY_COURSIER_COMMAND", "cs")
 ) extends CozyRuntimeResolver {
   override def resolveVersion(version: String, config: LauncherConfig, paths: LauncherPaths): String =
-    _fallback_version(version, config)
+    _catalog_version(version, config, paths) match {
+      case Some(v) =>
+        v.warnIfDeprecated()
+        v.version
+      case None =>
+        _fallback_version(version, config)
+    }
 
   def resolve(version: String, config: LauncherConfig, paths: LauncherPaths): Vector[Path] = {
-    val concreteversion = resolveVersion(version, config, paths)
+    val catalog = RuntimeCatalogStore(paths).loadOrRefresh(config)
+    val catalogversion = _catalog_version(version, config, paths, catalog)
+    val concreteversion =
+      catalogversion match {
+        case Some(v) =>
+          v.warnIfDeprecated()
+          v.version
+        case None =>
+          _fallback_version(version, config)
+      }
     val metadata = paths.runtimeRoot.resolve(concreteversion).resolve("classpath.txt")
     if (Files.isRegularFile(metadata)) {
       _read_classpath(metadata)
     } else {
       Files.createDirectories(metadata.getParent)
       Files.createDirectories(paths.coursierCache)
-      val repositories = (config.coursierRepositories ++ config.mavenRepositories).distinct.flatMap(r => Vector("-r", r))
+      val effectiveconfig = catalog.map(config.withCatalog).getOrElse(config)
+      val repositories = (effectiveconfig.coursierRepositories ++ effectiveconfig.mavenRepositories).distinct.flatMap(r => Vector("-r", r))
+      val module = catalogversion.map(_.moduleCoordinate).getOrElse(s"org.simplemodeling:cozy_2.12:$concreteversion")
       val command =
         Vector(coursiercommand, "fetch", "--classpath", "--cache", paths.coursierCache.toString) ++
           repositories ++
-          Vector(s"org.simplemodeling:cozy_2.12:$concreteversion")
+          Vector(module)
       val out = new StringBuilder
       val err = new StringBuilder
       val code = Process(command).!(ProcessLogger(out append _, err append _))
@@ -55,14 +70,31 @@ final class CoursierCozyRuntimeResolver(
     }
   }
 
+  private def _catalog_version(
+    version: String,
+    config: LauncherConfig,
+    paths: LauncherPaths
+  ): Option[RuntimeCatalogVersion] =
+    _catalog_version(version, config, paths, RuntimeCatalogStore(paths).loadOrRefresh(config))
+
+  private def _catalog_version(
+    version: String,
+    config: LauncherConfig,
+    paths: LauncherPaths,
+    catalog: Option[RuntimeCatalog]
+  ): Option[RuntimeCatalogVersion] =
+    catalog.map(_.resolve(version))
+
   private def _fallback_version(version: String, config: LauncherConfig): String =
     version match {
       case "latest" | "latest-stable" | "latest.release" =>
         _latest_release(config)
       case "latest-snapshot" =>
         _latest_snapshot(config)
-      case "newest" | "recommended" =>
+      case "newest" =>
         _newest(config)
+      case "recommended" =>
+        throw CozyException("failed to resolve recommended Cozy runtime version from runtime catalog")
       case x =>
         x
     }
@@ -82,10 +114,10 @@ final class CoursierCozyRuntimeResolver(
   private def _metadata_versions(repository: String): Vector[String] = {
     val url = _join(repository, "org", "simplemodeling", "cozy_2.12", "maven-metadata.xml")
     try {
-      val connection = URI.create(url).toURL.openConnection()
+      val connection = java.net.URI.create(url).toURL.openConnection()
       connection.setConnectTimeout(2000)
       connection.setReadTimeout(5000)
-      val text = Using.resource(scala.io.Source.fromInputStream(connection.getInputStream, "UTF-8"))(_.mkString)
+      val text = scala.util.Using.resource(scala.io.Source.fromInputStream(connection.getInputStream, "UTF-8"))(_.mkString)
       val latest = _first_tag(text, "latest").orElse(_first_tag(text, "release")).toVector
       val versions = "<version>([^<]+)</version>".r.findAllMatchIn(text).map(_.group(1).trim).filter(_.nonEmpty).toVector.reverse
       (latest ++ versions).distinct

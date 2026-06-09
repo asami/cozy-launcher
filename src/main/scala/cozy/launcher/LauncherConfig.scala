@@ -5,12 +5,13 @@ import java.nio.file.{Files, Path}
 
 /*
  * @since   Jun.  9, 2026
- * @version Jun.  9, 2026
+ * @version Jun. 10, 2026
  * @author  ASAMI, Tomoharu
  */
 final case class LauncherConfig(
   launcherDevDir: Option[String] = None,
   runtimeVersion: Option[String] = None,
+  runtimeCatalogUrl: Option[String] = None,
   runtimeDevDir: Option[String] = None,
   mavenRepositories: Vector[String] = Vector.empty,
   coursierRepositories: Vector[String] = Vector.empty
@@ -19,9 +20,16 @@ final case class LauncherConfig(
     LauncherConfig(
       launcherDevDir = higher.launcherDevDir.orElse(launcherDevDir),
       runtimeVersion = higher.runtimeVersion.orElse(runtimeVersion),
+      runtimeCatalogUrl = higher.runtimeCatalogUrl.orElse(runtimeCatalogUrl),
       runtimeDevDir = higher.runtimeDevDir.orElse(runtimeDevDir),
       mavenRepositories = _merge_list(mavenRepositories, higher.mavenRepositories),
       coursierRepositories = _merge_list(coursierRepositories, higher.coursierRepositories)
+    )
+
+  def withCatalog(catalog: RuntimeCatalog): LauncherConfig =
+    copy(
+      mavenRepositories = _merge_catalog_list(mavenRepositories, catalog.mavenRepositories, LauncherConfig.DEFAULT_MAVEN_REPOSITORIES),
+      coursierRepositories = _merge_catalog_list(coursierRepositories, catalog.coursierRepositories, LauncherConfig.DEFAULT_COURSIER_REPOSITORIES)
     )
 
   def normalizedWithDefaults: LauncherConfig =
@@ -36,6 +44,13 @@ final case class LauncherConfig(
   ): Vector[String] =
     (higher ++ lower).distinct
 
+  private def _merge_catalog_list(
+    explicit: Vector[String],
+    catalog: Vector[String],
+    defaults: Vector[String]
+  ): Vector[String] =
+    (explicit ++ catalog ++ defaults).distinct
+
   private def _append_defaults(
     configured: Vector[String],
     defaults: Vector[String]
@@ -44,7 +59,8 @@ final case class LauncherConfig(
 }
 
 object LauncherConfig {
-  val DEFAULT_RUNTIME_VERSION = "latest"
+  val DEFAULT_RUNTIME_VERSION = "recommended"
+  val DEFAULT_RUNTIME_CATALOG_URL = "https://www.simplemodeling.org/repository/cozy/runtime-catalog.yaml"
   val DEFAULT_MAVEN_REPOSITORIES = Vector(
     "https://www.simplemodeling.org/repository/maven",
     "https://raw.github.com/asami/maven-repository/2020/releases",
@@ -96,6 +112,7 @@ object LauncherConfig {
     LauncherConfig(
       launcherDevDir = _first_("cozy.launcher.dev.dir", "cozy.launcher.dev-dir", "cozy.launcher.devDir", "launcher.dev.dir", "launcher.dev-dir", "launcher.devDir"),
       runtimeVersion = _first_("runtime.version", "cozy.runtime.version", "version"),
+      runtimeCatalogUrl = _first_("runtime.catalog.url", "cozy.runtime.catalog.url", "catalog.url"),
       runtimeDevDir = _first_("runtime.dev-dir", "runtime.dev_dir", "runtime.devDir", "runtime.dev.dir", "cozy.runtime.dev-dir", "cozy.runtime.dev_dir", "cozy.runtime.devDir", "cozy.runtime.dev.dir"),
       mavenRepositories = _all_("repositories.maven", "cozy.repository.maven"),
       coursierRepositories = _all_("repositories.coursier", "cozy.repository.coursier")
@@ -105,10 +122,12 @@ object LauncherConfig {
   def render(config: LauncherConfig): String = {
     val c = config.normalizedWithDefaults
     val runtime = c.runtimeVersion.getOrElse("(not configured)")
+    val catalog = c.runtimeCatalogUrl.getOrElse("(not configured)")
     val runtimedevdir = c.runtimeDevDir.getOrElse("(not configured)")
     val mavens = c.mavenRepositories.mkString(", ")
     val coursiers = c.coursierRepositories.mkString(", ")
     s"""runtime.version: $runtime
+       |runtime.catalog.url: $catalog
        |runtime.devDir: $runtimedevdir
        |repositories.maven: $mavens
        |repositories.coursier: $coursiers""".stripMargin

@@ -5,7 +5,7 @@ import java.nio.file.Files
 
 /*
  * @since   Jun.  9, 2026
- * @version Jun.  9, 2026
+ * @version Jun. 10, 2026
  * @author  ASAMI, Tomoharu
  */
 final class CozyLauncher(
@@ -55,9 +55,29 @@ final class CozyLauncher(
     config: LauncherConfig
   ): Int = {
     val store = RuntimeVersionStore(paths)
+    val catalogstore = RuntimeCatalogStore(paths)
     command match {
       case CozyCommand.Runtime.Current =>
         println(runtimeresolver.resolveVersion(store.current(None, config), config, paths))
+        0
+      case CozyCommand.Runtime.RemoteList =>
+        val catalog = catalogstore.loadOrRefresh(config)
+          .getOrElse(throw CozyException("failed to load Cozy runtime catalog"))
+        println(catalog.renderRemoteList)
+        0
+      case CozyCommand.Runtime.CatalogRefresh =>
+        catalogstore.refresh(config)
+        println(s"refreshed Cozy runtime catalog: ${paths.runtimeCatalog}")
+        0
+      case CozyCommand.Runtime.CatalogShow =>
+        val catalog = catalogstore.loadOrRefresh(config)
+          .getOrElse(throw CozyException("failed to load Cozy runtime catalog"))
+        println(catalog.render)
+        0
+      case CozyCommand.Runtime.Channels =>
+        val catalog = catalogstore.loadOrRefresh(config)
+          .getOrElse(throw CozyException("failed to load Cozy runtime catalog"))
+        println(catalog.renderChannels)
         0
       case CozyCommand.Runtime.LocalList =>
         val installed =

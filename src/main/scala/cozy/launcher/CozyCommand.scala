@@ -2,7 +2,7 @@ package cozy.launcher
 
 /*
  * @since   Jun.  9, 2026
- * @version Jun.  9, 2026
+ * @version Jun. 10, 2026
  * @author  ASAMI, Tomoharu
  */
 sealed trait CozyCommand
@@ -17,6 +17,10 @@ object CozyCommand {
   sealed trait Runtime extends CozyCommand
   object Runtime {
     case object Current extends Runtime
+    case object RemoteList extends Runtime
+    case object CatalogRefresh extends Runtime
+    case object CatalogShow extends Runtime
+    case object Channels extends Runtime
     case object LocalList extends Runtime
     final case class Install(version: String) extends Runtime
     final case class Use(version: String, target: RuntimeUseTarget) extends Runtime
@@ -91,6 +95,10 @@ object CozyCommandParser {
   private def _parse_runtime(args: Vector[String]): CozyCommand.Runtime =
     args match {
       case Vector("current") => CozyCommand.Runtime.Current
+      case Vector("remote", "list") => CozyCommand.Runtime.RemoteList
+      case Vector("refresh") => CozyCommand.Runtime.CatalogRefresh
+      case Vector("catalog", "show") => CozyCommand.Runtime.CatalogShow
+      case Vector("channels") => CozyCommand.Runtime.Channels
       case Vector("list") => CozyCommand.Runtime.LocalList
       case Vector("local", "list") => CozyCommand.Runtime.LocalList
       case Vector("install", version) => CozyCommand.Runtime.Install(version)
@@ -113,6 +121,10 @@ object CozyCommandParser {
       |  cozy launcher version
       |  cozy launcher help
       |  cozy runtime current
+      |  cozy runtime refresh
+      |  cozy runtime remote list
+      |  cozy runtime catalog show
+      |  cozy runtime channels
       |  cozy runtime list
       |  cozy runtime local list
       |  cozy runtime install <version>
@@ -123,8 +135,8 @@ object CozyCommandParser {
       |  cozy runtime config show
       |
       |Runtime:
-      |  The launcher resolves org.simplemodeling:cozy_2.12:<version> with Coursier
-      |  and invokes cozy.Cozy in the same JVM.
+      |  The launcher selects a Cozy runtime from the runtime catalog, resolves it
+      |  with Coursier, and invokes cozy.Cozy in the same JVM.
       |  --runtime-dev-dir <dir> runs cozy.Cozy from a local Cozy checkout with sbt.
       |  Version selectors: latest, latest-stable, latest-snapshot, newest, recommended.
       |  Launcher config loads from ~/.cozy/launcher.yaml, conf/cozy/launcher.yaml, then .cozy/launcher.yaml.
