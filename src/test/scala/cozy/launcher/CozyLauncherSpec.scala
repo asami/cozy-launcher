@@ -16,6 +16,7 @@ object CozyLauncherSpec {
     spec.configFileOptionOverridesProjectConfig()
     spec.runtimeCatalogSelection()
     spec.runtimeCatalogCommands()
+    spec.runtimeCurrentWarnsWhenCachedRecommendedIsStale()
     spec.runtimeVersionPrecedence()
     spec.runtimeUseWritesExpectedFiles()
     spec.runtimeUseAutoSelectsProjectWhenCozyDirectoryExists()
@@ -146,6 +147,28 @@ final class CozyLauncherSpec {
     assert(listoutput.contains("0.2.21-SNAPSHOT"))
   }
 
+  def runtimeCurrentWarnsWhenCachedRecommendedIsStale(): Unit = _with_temp_paths { paths =>
+    val remotecatalog = paths.cwd.resolve("runtime-catalog.yaml")
+    _write(paths.runtimeCatalog, _catalog_text)
+    _write(remotecatalog, _catalog_text.replace("recommended: 0.2.20", "recommended: 0.2.21-SNAPSHOT"))
+    _write(paths.cwd.resolve(".cozy").resolve("launcher.yaml"),
+      s"""runtime:
+         |  catalog:
+         |    url: $remotecatalog
+         |""".stripMargin)
+    val launcher = new CozyLauncher(paths, CoursierCozyRuntimeResolver("false"), FakeInvoker())
+
+    val (code, stdout, stderr) = _capture_stdout_stderr {
+      launcher.run(Vector("runtime", "current"))
+    }
+
+    _assert_equals(code, 0)
+    _assert_equals(stdout.trim, "0.2.20")
+    assert(stderr.contains("cached Cozy runtime catalog resolves recommended to 0.2.20"))
+    assert(stderr.contains("remote catalog resolves it to 0.2.21-SNAPSHOT"))
+    assert(stderr.contains("cozy runtime refresh"))
+  }
+
   def runtimeVersionPrecedence(): Unit = _with_temp_paths { paths =>
     val resolver = FakeResolver()
     val invoker = FakeInvoker()
@@ -233,6 +256,17 @@ final class CozyLauncherSpec {
       f
     }
     (code, out.toString)
+  }
+
+  private def _capture_stdout_stderr(f: => Int): (Int, String, String) = {
+    val out = new java.io.ByteArrayOutputStream()
+    val err = new java.io.ByteArrayOutputStream()
+    val code = Console.withOut(new java.io.PrintStream(out)) {
+      Console.withErr(new java.io.PrintStream(err)) {
+        f
+      }
+    }
+    (code, out.toString, err.toString)
   }
 
   private def _with_temp_paths(f: LauncherPaths => Unit): Unit = {

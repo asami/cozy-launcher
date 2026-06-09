@@ -58,8 +58,7 @@ final class CozyLauncher(
     val catalogstore = RuntimeCatalogStore(paths)
     command match {
       case CozyCommand.Runtime.Current =>
-        println(runtimeresolver.resolveVersion(store.current(None, config), config, paths))
-        0
+        _run_runtime_current(store, catalogstore, config)
       case CozyCommand.Runtime.RemoteList =>
         val catalog = catalogstore.loadOrRefresh(config)
           .getOrElse(throw CozyException("failed to load Cozy runtime catalog"))
@@ -119,6 +118,44 @@ final class CozyLauncher(
         0
     }
   }
+
+  private def _run_runtime_current(
+    store: RuntimeVersionStore,
+    catalogstore: RuntimeCatalogStore,
+    config: LauncherConfig
+  ): Int = {
+    val selector = store.current(None, config)
+    val current = runtimeresolver.resolveVersion(selector, config, paths)
+    println(current)
+    _warn_if_runtime_catalog_is_stale(selector, current, catalogstore, config)
+    0
+  }
+
+  private def _warn_if_runtime_catalog_is_stale(
+    selector: String,
+    current: String,
+    catalogstore: RuntimeCatalogStore,
+    config: LauncherConfig
+  ): Unit =
+    if (_is_dynamic_runtime_selector(selector)) {
+      val remoteversion =
+        try Some(catalogstore.fetch(config).resolve(selector).version)
+        catch {
+          case _: Throwable => None
+        }
+      remoteversion.filter(_ != current).foreach { version =>
+        Console.err.println(
+          s"warning: cached Cozy runtime catalog resolves $selector to $current, but remote catalog resolves it to $version."
+        )
+        Console.err.println("Run 'cozy runtime refresh' to update the local runtime catalog cache.")
+      }
+    }
+
+  private def _is_dynamic_runtime_selector(selector: String): Boolean =
+    selector match {
+      case "recommended" | "latest" | "latest-stable" | "latest.release" | "latest-snapshot" | "newest" => true
+      case _ => false
+    }
 
   private def _run_execute(
     command: CozyCommand.Execute,
