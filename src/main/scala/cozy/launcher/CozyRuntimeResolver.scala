@@ -7,7 +7,7 @@ import scala.sys.process.*
 
 /*
  * @since   Jun.  9, 2026
- * @version Jun. 10, 2026
+ * @version Jun. 20, 2026
  * @author  ASAMI, Tomoharu
  */
 trait CozyRuntimeResolver {
@@ -175,6 +175,62 @@ object CozyInvoker {
     new CozyInvoker()
 }
 
+trait RuntimeClasspathExporter {
+  def exportRuntimeClasspath(project: Path): String
+}
+
+object SbtRuntimeClasspathExporter extends RuntimeClasspathExporter {
+  private val _command = Vector(
+    "sbt",
+    "--batch",
+    "-Dsbt.server.autostart=false",
+    "-Dsbt.supershell=false",
+    "export Runtime / fullClasspath"
+  )
+
+  def exportRuntimeClasspath(project: Path): String = {
+    val out = new StringBuilder
+    val err = new StringBuilder
+    val code = Process(_command, project.toFile).
+      !(ProcessLogger(line => out.append(line).append("\n"), line => err.append(line).append("\n")))
+    if (code != 0)
+      throw CozyException(s"failed to resolve Runtime / fullClasspath for ${project}: ${err.toString.trim}", 2)
+    out.toString.linesIterator.
+      map(_.trim).
+      find(line => line.startsWith("/") && line.contains(File.pathSeparator)).
+      orElse(out.toString.linesIterator.map(_.trim).find(_.startsWith("/"))).
+      getOrElse(throw CozyException(s"failed to find classpath in sbt output for ${project}", 2))
+  }
+}
+
+private object DevelopmentClasspath {
+  def classpathFile(project: Path): Path =
+    project.resolve("target").resolve("cozy.d").resolve("runtime-classpath.txt")
+
+  def classpath(project: Path, exporter: RuntimeClasspathExporter): Vector[Path] = {
+    val file = classpathFile(project)
+    val text =
+      if (Files.isRegularFile(file) && Files.size(file) > 0L)
+        Files.readString(file, StandardCharsets.UTF_8).trim
+      else {
+        val exported = exporter.exportRuntimeClasspath(project)
+        Files.createDirectories(file.getParent)
+        Files.writeString(file, exported + "\n", StandardCharsets.UTF_8)
+        exported
+      }
+    val entries = _classpath_to_paths(text)
+    if (entries.isEmpty)
+      throw CozyException(s"Runtime / fullClasspath was empty for ${project}", 2)
+    entries
+  }
+
+  def classpathString(project: Path, exporter: RuntimeClasspathExporter): String =
+    classpath(project, exporter).map(_.toString).mkString(File.pathSeparator)
+
+  private def _classpath_to_paths(value: String): Vector[Path] =
+    value.split(File.pathSeparator).toVector.map(_.trim).filter(_.nonEmpty).map(Path.of(_))
+}
+
 trait LauncherDevInvoker {
   def invoke(devdir: Path, args: Vector[String]): Int
 }
@@ -182,12 +238,18 @@ trait LauncherDevInvoker {
 object LauncherDevInvoker {
   object System extends LauncherDevInvoker {
     def invoke(devdir: Path, args: Vector[String]): Int = {
-      if (!Files.isDirectory(devdir))
+      if (!Files.isDirectory(devdir) || !Files.isRegularFile(devdir.resolve("build.sbt")))
         throw CozyException(s"cozy launcher development directory not found: ${devdir}")
+      val classpath = DevelopmentClasspath.classpathString(devdir, SbtRuntimeClasspathExporter)
       val argsfile = _write_args_file(args)
       try {
-        val builder = new java.lang.ProcessBuilder("sbt", "--batch", "run")
-        builder.directory(devdir.toFile)
+        val builder = new java.lang.ProcessBuilder(
+          "java",
+          "-cp",
+          classpath,
+          "cozy.launcher.CozyLauncherMain"
+        )
+        builder.directory(Path.of(sys.props("user.dir")).toAbsolutePath.normalize.toFile)
         builder.inheritIO()
         builder.environment().put("COZY_LAUNCHER_DEV_DELEGATED", "1")
         builder.environment().put("COZY_LAUNCHER_ARGS_FILE", argsfile.toString)
@@ -216,24 +278,12 @@ trait CozyRuntimeDevInvoker {
 
 object CozyRuntimeDevInvoker {
   object System extends CozyRuntimeDevInvoker {
-    private val _command = Vector(
-      "sbt",
-      "--batch",
-      "-Dsbt.server.autostart=false",
-      "-Dsbt.supershell=false"
-    )
+    private val _invoker = CozyInvoker()
 
     def invoke(devdir: Path, args: Vector[String]): Int = {
       if (!Files.isDirectory(devdir) || !Files.isRegularFile(devdir.resolve("build.sbt")))
         throw CozyException(s"cozy runtime development directory not found: ${devdir}")
-      val runMainArgs = args.map(_quote).mkString(" ")
-      val builder = new java.lang.ProcessBuilder((_command :+ s"runMain cozy.Cozy $runMainArgs")*)
-      builder.directory(devdir.toFile)
-      builder.inheritIO()
-      builder.start().waitFor()
+      _invoker.invoke(DevelopmentClasspath.classpath(devdir, SbtRuntimeClasspathExporter), args)
     }
-
-    private def _quote(s: String): String =
-      "\"" + s.replace("\\", "\\\\").replace("\"", "\\\"") + "\""
   }
 }

@@ -4,7 +4,7 @@ import java.nio.file.{Files, Path}
 
 /*
  * @since   Jun.  9, 2026
- * @version Jun. 10, 2026
+ * @version Jun. 20, 2026
  * @author  ASAMI, Tomoharu
  */
 object CozyLauncherSpec {
@@ -24,6 +24,7 @@ object CozyLauncherSpec {
     spec.executeUsesCliRuntimeDevelopmentDirectory()
     spec.executeUsesConfiguredRuntimeDevelopmentDirectory()
     spec.launcherDevDirDelegatesToDevelopmentLauncher()
+    spec.developmentInvokersUseJavaDirect()
     spec.noRuntimeLibraryDependencies()
     println("CozyLauncherSpec: OK")
   }
@@ -242,6 +243,16 @@ final class CozyLauncherSpec {
     launcher.run(Vector("launcher", "version"))
     _assert_equals(invoker.devDir, Some(paths.cwd.resolve("../launcher").normalize.toAbsolutePath.normalize))
     _assert_equals(invoker.args, Vector("launcher", "version"))
+  }
+
+
+  def developmentInvokersUseJavaDirect(): Unit = {
+    val source = Files.readString(Path.of("src/main/scala/cozy/launcher/CozyRuntimeResolver.scala"))
+    assert(!source.contains("runMain cozy.Cozy"))
+    assert(!source.contains("new java.lang.ProcessBuilder(\"sbt\", \"--batch\", \"run\")"))
+    assert(source.contains("new java.lang.ProcessBuilder("))
+    assert(source.contains("\"java\""))
+    assert(source.contains("export Runtime / fullClasspath"))
   }
 
   def noRuntimeLibraryDependencies(): Unit = {

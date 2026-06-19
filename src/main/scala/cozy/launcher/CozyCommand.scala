@@ -2,7 +2,7 @@ package cozy.launcher
 
 /*
  * @since   Jun.  9, 2026
- * @version Jun. 10, 2026
+ * @version Jun. 20, 2026
  * @author  ASAMI, Tomoharu
  */
 sealed trait CozyCommand
@@ -137,7 +137,7 @@ object CozyCommandParser {
       |Runtime:
       |  The launcher selects a Cozy runtime from the runtime catalog, resolves it
       |  with Coursier, and invokes cozy.Cozy in the same JVM.
-      |  --runtime-dev-dir <dir> runs cozy.Cozy from a local Cozy checkout with sbt.
+      |  --runtime-dev-dir <dir> runs cozy.Cozy from a local checkout classpath with java direct execution.
       |  Version selectors: latest, latest-stable, latest-snapshot, newest, recommended.
       |  Launcher config loads from ~/.cozy/launcher.yaml, conf/cozy/launcher.yaml, then .cozy/launcher.yaml.
       |  .cozy/config.yaml remains build/publish configuration and is not launcher configuration.

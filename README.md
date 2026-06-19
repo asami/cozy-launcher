@@ -41,8 +41,10 @@ Use a local Cozy checkout while developing Cozy itself:
 cozy --runtime-dev-dir /path/to/cozy sbt-bridge v1 --request /tmp/request.json
 ```
 
-`--runtime-dev-dir` bypasses Coursier runtime resolution and runs
-`sbt runMain cozy.Cozy ...` in the selected checkout.
+`--runtime-dev-dir` bypasses Coursier runtime resolution, resolves the selected
+checkout's `Runtime / fullClasspath`, and invokes `cozy.Cozy` through java direct
+execution. sbt is used only to export the classpath when the cached
+`target/cozy.d/runtime-classpath.txt` is missing.
 
 ## Configuration
 
@@ -81,6 +83,19 @@ Install the app from the channel:
 ```bash
 cs install cozy --channel https://www.simplemodeling.org/repository/cozy/coursier-channel.json
 ```
+
+Publication is intentionally constrained by version type:
+
+```bash
+# Public release versions are published to the repository.
+sbt publish
+
+# Development SNAPSHOT versions are local-only.
+sbt publishLocal
+```
+
+`publishLocal` is refused for release versions. `publish` is refused for
+SNAPSHOT versions.
 
 `publish` also updates:
 
