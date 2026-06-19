@@ -1,11 +1,33 @@
 import org.goldenport.cozy.CozyPlugin.autoImport._
 
 ThisBuild / organization := "org.simplemodeling"
-ThisBuild / version := "0.1.2"
+ThisBuild / version := "0.1.3"
 ThisBuild / scalaVersion := "3.3.7"
 ThisBuild / publishMavenStyle := true
 
 cozyCoursierChannelPath := "repository/cozy/coursier-channel.json"
+
+def ensurePublishAllowed(version: String): Unit = {
+  if (version.endsWith("-SNAPSHOT"))
+    sys.error(s"Refusing to publish SNAPSHOT cozy-launcher version $version. " +
+      "Use publishLocal for development versions.")
+}
+
+def ensurePublishLocalAllowed(version: String): Unit = {
+  if (!version.endsWith("-SNAPSHOT"))
+    sys.error(s"Refusing to publishLocal release cozy-launcher version $version. " +
+      "Use publish for public release versions.")
+}
+
+publish / skip := {
+  ensurePublishAllowed(version.value)
+  false
+}
+
+publishLocal / skip := {
+  ensurePublishLocalAllowed(version.value)
+  false
+}
 
 cozyCoursierChannelEntries := Seq(CozyCoursierChannelEntry(
   name = "cozy",
