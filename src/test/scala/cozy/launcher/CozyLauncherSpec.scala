@@ -11,6 +11,7 @@ object CozyLauncherSpec {
   def main(args: Array[String]): Unit = {
     val spec = new CozyLauncherSpec
     spec.parser()
+    spec.runtimeVersion()
     spec.launcherVersion()
     spec.configMerge()
     spec.configFileOptionOverridesProjectConfig()
@@ -50,15 +51,28 @@ final class CozyLauncherSpec {
     _assert_equals(dev.args, Vector("sbt-bridge", "v1"))
   }
 
+  def runtimeVersion(): Unit = _with_temp_paths { paths =>
+    val resolver = FakeResolver()
+    val invoker = FakeInvoker()
+    val launcher = new CozyLauncher(paths, resolver, invoker)
+
+    val code = launcher.run(Vector("version"))
+
+    _assert_equals(code, 0)
+    _assert_equals(resolver.resolvedClasspaths, Vector("recommended"))
+    _assert_equals(invoker.lastArgs, Vector("version"))
+    _assert_equals(CozyCommandParser.parse(Vector("version")), CozyCommand.Execute(Vector("version"), None, None))
+    _assert_equals(CozyCommandParser.parse(Vector("--version")), CozyCommand.Execute(Vector("version"), None, None))
+  }
+
   def launcherVersion(): Unit = _with_temp_paths { paths =>
     val launcher = new CozyLauncher(paths, FakeResolver(), FakeInvoker())
     val (code, output) = _capture_stdout {
-      launcher.run(Vector("--version"))
+      launcher.run(Vector("launcher", "version"))
     }
     _assert_equals(code, 0)
     _assert_equals(output.trim, s"${LauncherBuildInfo.name} ${LauncherBuildInfo.version}")
-    _assert_equals(CozyCommandParser.parse(Vector("version")), CozyCommand.Version)
-    _assert_equals(CozyCommandParser.parse(Vector("launcher", "version")), CozyCommand.Version)
+    _assert_equals(CozyCommandParser.parse(Vector("launcher", "version")), CozyCommand.LauncherVersion)
   }
 
   def configMerge(): Unit = _with_temp_paths { paths =>

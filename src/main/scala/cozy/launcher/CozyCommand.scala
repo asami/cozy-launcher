@@ -32,7 +32,7 @@ object CozyCommand {
     case Auto, Global, Project
   }
 
-  case object Version extends CozyCommand
+  case object LauncherVersion extends CozyCommand
   case object Help extends CozyCommand
 }
 
@@ -40,8 +40,10 @@ object CozyCommandParser {
   def parse(args: Vector[String]): CozyCommand = {
     val (runtimeversion, runtimedevdir, rest) = _take_global_runtime(args)
     rest match {
-      case Vector("--version") | Vector("version") | Vector("launcher", "version") | Vector("launcher", "--version") =>
-        CozyCommand.Version
+      case Vector("--version") | Vector("version") =>
+        CozyCommand.Execute(Vector("version"), runtimeversion, runtimedevdir)
+      case Vector("launcher", "version") | Vector("launcher", "--version") =>
+        CozyCommand.LauncherVersion
       case Vector() | Vector("-h") | Vector("--help") | Vector("help") | Vector("launcher", "help") =>
         CozyCommand.Help
       case Vector("runtime", tail*) =>
@@ -117,6 +119,7 @@ object CozyCommandParser {
   val helpText: String =
     """Usage:
       |  cozy [--runtime <version>] <cozy-args...>
+      |  cozy version
       |  cozy --version
       |  cozy launcher version
       |  cozy launcher help

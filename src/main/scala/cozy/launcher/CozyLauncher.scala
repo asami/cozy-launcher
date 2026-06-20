@@ -5,7 +5,7 @@ import java.nio.file.Files
 
 /*
  * @since   Jun.  9, 2026
- * @version Jun. 10, 2026
+ * @version Jun. 20, 2026
  * @author  ASAMI, Tomoharu
  */
 final class CozyLauncher(
@@ -25,7 +25,7 @@ final class CozyLauncher(
     }
     val command = CozyCommandParser.parse(commandargs)
     command match {
-      case CozyCommand.Version =>
+      case CozyCommand.LauncherVersion =>
         println(s"${LauncherBuildInfo.name} ${LauncherBuildInfo.version}")
         0
       case CozyCommand.Help =>
