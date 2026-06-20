@@ -5,6 +5,8 @@ ThisBuild / version := "0.1.4-SNAPSHOT"
 ThisBuild / scalaVersion := "3.3.7"
 ThisBuild / publishMavenStyle := true
 
+libraryDependencies += "org.scalatest" %% "scalatest" % "3.2.19" % Test
+
 cozyCoursierChannelPath := "repository/cozy/coursier-channel.json"
 
 def ensurePublishAllowed(version: String): Unit = {
@@ -62,9 +64,6 @@ lazy val root = (project in file("."))
       ))
     }.taskValue,
     Compile / mainClass := Some("cozy.launcher.CozyLauncherMain"),
-    Test / test := {
-      (Test / runMain).toTask(" cozy.launcher.CozyLauncherSpec").value
-    },
     publishTo := {
       val repo = sys.env.get("SIMPLEMODELING_MAVEN_LOCAL")
         .map(file)

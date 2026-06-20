@@ -33,7 +33,8 @@ object CozyCommand {
   }
 
   case object LauncherVersion extends CozyCommand
-  case object Help extends CozyCommand
+  case object RuntimeHelp extends CozyCommand
+  case object LauncherHelp extends CozyCommand
 }
 
 object CozyCommandParser {
@@ -44,8 +45,10 @@ object CozyCommandParser {
         CozyCommand.Execute(Vector("version"), runtimeversion, runtimedevdir)
       case Vector("launcher", "version") | Vector("launcher", "--version") =>
         CozyCommand.LauncherVersion
-      case Vector() | Vector("-h") | Vector("--help") | Vector("help") | Vector("launcher", "help") =>
-        CozyCommand.Help
+      case Vector("-h") | Vector("--help") | Vector("help") =>
+        CozyCommand.RuntimeHelp
+      case Vector() | Vector("launcher", "help") | Vector("launcher", "--help") =>
+        CozyCommand.LauncherHelp
       case Vector("runtime", tail*) =>
         _parse_runtime(tail.toVector)
       case other =>

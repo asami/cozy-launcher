@@ -28,7 +28,13 @@ final class CozyLauncher(
       case CozyCommand.LauncherVersion =>
         println(s"${LauncherBuildInfo.name} ${LauncherBuildInfo.version}")
         0
-      case CozyCommand.Help =>
+      case CozyCommand.RuntimeHelp =>
+        val code = _run_execute(CozyCommand.Execute(Vector("--help"), None, None), config)
+        println()
+        println("Launcher help:")
+        println(CozyCommandParser.helpText)
+        code
+      case CozyCommand.LauncherHelp =>
         println(CozyCommandParser.helpText)
         0
       case runtime: CozyCommand.Runtime =>

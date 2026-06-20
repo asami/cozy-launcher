@@ -1,5 +1,8 @@
 package cozy.launcher
 
+import org.scalatest.GivenWhenThen
+import org.scalatest.matchers.should.Matchers
+import org.scalatest.wordspec.AnyWordSpec
 import java.nio.file.{Files, Path}
 
 /*
@@ -13,6 +16,7 @@ object CozyLauncherSpec {
     spec.parser()
     spec.runtimeVersion()
     spec.launcherVersion()
+    spec.runtimeHelp()
     spec.configMerge()
     spec.configFileOptionOverridesProjectConfig()
     spec.runtimeCatalogSelection()
@@ -31,7 +35,154 @@ object CozyLauncherSpec {
   }
 }
 
-final class CozyLauncherSpec {
+final class CozyLauncherSpec extends AnyWordSpec with Matchers with GivenWhenThen {
+  "cozy launcher" should {
+    "command parsing" which {
+      "parser" in {
+        Given("the cozy launcher scenario: parser")
+        When("the launcher behavior is exercised")
+        Then("the executable specification holds through scenario-specific expectations")
+        parser()
+      }
+
+    }
+
+    "configuration and launcher metadata" which {
+      "launcher version" in {
+        Given("the cozy launcher scenario: launcher version")
+        When("the launcher behavior is exercised")
+        Then("the executable specification holds through scenario-specific expectations")
+        launcherVersion()
+      }
+
+      "config merge" in {
+        Given("the cozy launcher scenario: config merge")
+        When("the launcher behavior is exercised")
+        Then("the executable specification holds through scenario-specific expectations")
+        configMerge()
+      }
+
+      "config file option overrides project config" in {
+        Given("the cozy launcher scenario: config file option overrides project config")
+        When("the launcher behavior is exercised")
+        Then("the executable specification holds through scenario-specific expectations")
+        configFileOptionOverridesProjectConfig()
+      }
+
+      "execute uses configured runtime development directory" in {
+        Given("the cozy launcher scenario: execute uses configured runtime development directory")
+        When("the launcher behavior is exercised")
+        Then("the executable specification holds through scenario-specific expectations")
+        executeUsesConfiguredRuntimeDevelopmentDirectory()
+      }
+
+      "launcher dev dir delegates to development launcher" in {
+        Given("the cozy launcher scenario: launcher dev dir delegates to development launcher")
+        When("the launcher behavior is exercised")
+        Then("the executable specification holds through scenario-specific expectations")
+        launcherDevDirDelegatesToDevelopmentLauncher()
+      }
+
+    }
+
+    "runtime selection and catalog operations" which {
+      "runtime version" in {
+        Given("the cozy launcher scenario: runtime version")
+        When("the launcher behavior is exercised")
+        Then("the executable specification holds through scenario-specific expectations")
+        runtimeVersion()
+      }
+
+      "runtime help" in {
+        Given("the cozy launcher scenario: runtime help")
+        When("the launcher behavior is exercised")
+        Then("the executable specification holds through scenario-specific expectations")
+        runtimeHelp()
+      }
+
+      "runtime catalog selection" in {
+        Given("the cozy launcher scenario: runtime catalog selection")
+        When("the launcher behavior is exercised")
+        Then("the executable specification holds through scenario-specific expectations")
+        runtimeCatalogSelection()
+      }
+
+      "runtime catalog commands" in {
+        Given("the cozy launcher scenario: runtime catalog commands")
+        When("the launcher behavior is exercised")
+        Then("the executable specification holds through scenario-specific expectations")
+        runtimeCatalogCommands()
+      }
+
+      "runtime current warns when cached recommended is stale" in {
+        Given("the cozy launcher scenario: runtime current warns when cached recommended is stale")
+        When("the launcher behavior is exercised")
+        Then("the executable specification holds through scenario-specific expectations")
+        runtimeCurrentWarnsWhenCachedRecommendedIsStale()
+      }
+
+      "runtime version precedence" in {
+        Given("the cozy launcher scenario: runtime version precedence")
+        When("the launcher behavior is exercised")
+        Then("the executable specification holds through scenario-specific expectations")
+        runtimeVersionPrecedence()
+      }
+
+      "runtime use writes expected files" in {
+        Given("the cozy launcher scenario: runtime use writes expected files")
+        When("the launcher behavior is exercised")
+        Then("the executable specification holds through scenario-specific expectations")
+        runtimeUseWritesExpectedFiles()
+      }
+
+      "runtime use auto selects project when cozy directory exists" in {
+        Given("the cozy launcher scenario: runtime use auto selects project when cozy directory exists")
+        When("the launcher behavior is exercised")
+        Then("the executable specification holds through scenario-specific expectations")
+        runtimeUseAutoSelectsProjectWhenCozyDirectoryExists()
+      }
+
+    }
+
+    "artifact execution and resolution" which {
+      "execute delegates to cozy runtime" in {
+        Given("the cozy launcher scenario: execute delegates to cozy runtime")
+        When("the launcher behavior is exercised")
+        Then("the executable specification holds through scenario-specific expectations")
+        executeDelegatesToCozyRuntime()
+      }
+
+      "execute uses cli runtime development directory" in {
+        Given("the cozy launcher scenario: execute uses cli runtime development directory")
+        When("the launcher behavior is exercised")
+        Then("the executable specification holds through scenario-specific expectations")
+        executeUsesCliRuntimeDevelopmentDirectory()
+      }
+
+    }
+
+    "development runtime operations" which {
+      "development invokers use java direct" in {
+        Given("the cozy launcher scenario: development invokers use java direct")
+        When("the launcher behavior is exercised")
+        Then("the executable specification holds through scenario-specific expectations")
+        developmentInvokersUseJavaDirect()
+      }
+
+    }
+
+    "packaging boundaries" which {
+      "no runtime library dependencies" in {
+        Given("the cozy launcher scenario: no runtime library dependencies")
+        When("the launcher behavior is exercised")
+        Then("the executable specification holds through scenario-specific expectations")
+        noRuntimeLibraryDependencies()
+      }
+
+    }
+
+  }
+
   def parser(): Unit = {
     val use = CozyCommandParser.parse(Vector("runtime", "use", "latest"))
       .asInstanceOf[CozyCommand.Runtime.Use]
@@ -75,6 +226,21 @@ final class CozyLauncherSpec {
     _assert_equals(CozyCommandParser.parse(Vector("launcher", "version")), CozyCommand.LauncherVersion)
   }
 
+  def runtimeHelp(): Unit = _with_temp_paths { paths =>
+    val invoker = FakeInvoker()
+    val launcher = new CozyLauncher(paths, FakeResolver(), invoker)
+    val (code, output) = _capture_stdout {
+      launcher.run(Vector("help"))
+    }
+    _assert_equals(code, 0)
+    _assert_equals(invoker.lastArgs, Vector("--help"))
+    output.contains("Launcher help:") shouldBe true
+    output.contains("cozy launcher help") shouldBe true
+    _assert_equals(CozyCommandParser.parse(Vector("help")), CozyCommand.RuntimeHelp)
+    _assert_equals(CozyCommandParser.parse(Vector("--help")), CozyCommand.RuntimeHelp)
+    _assert_equals(CozyCommandParser.parse(Vector("launcher", "help")), CozyCommand.LauncherHelp)
+  }
+
   def configMerge(): Unit = _with_temp_paths { paths =>
     _write(paths.cozyHome.resolve("launcher.yaml"),
       """runtime:
@@ -106,9 +272,9 @@ final class CozyLauncherSpec {
     _assert_equals(config.runtimeVersion, Some("0.2.20-SNAPSHOT"))
     _assert_equals(config.runtimeCatalogUrl, Some("https://project.example/cozy/runtime-catalog.yaml"))
     _assert_equals(config.runtimeDevDir, Some("../cozy"))
-    assert(config.mavenRepositories.contains("https://global.example/maven"))
-    assert(config.coursierRepositories.contains("projectRepo"))
-    assert(config.coursierRepositories.contains("ivy2Local"))
+    config.mavenRepositories.contains("https://global.example/maven") shouldBe true
+    config.coursierRepositories.contains("projectRepo") shouldBe true
+    config.coursierRepositories.contains("ivy2Local") shouldBe true
   }
 
   def configFileOptionOverridesProjectConfig(): Unit = _with_temp_paths { paths =>
@@ -147,19 +313,19 @@ final class CozyLauncherSpec {
       launcher.run(Vector("runtime", "catalog", "show"))
     }
     _assert_equals(showcode, 0)
-    assert(showoutput.contains("recommended: 0.2.20"))
+    showoutput.contains("recommended: 0.2.20") shouldBe true
 
     val (channelscode, channelsoutput) = _capture_stdout {
       launcher.run(Vector("runtime", "channels"))
     }
     _assert_equals(channelscode, 0)
-    assert(channelsoutput.contains("latest-stable: 0.2.20"))
+    channelsoutput.contains("latest-stable: 0.2.20") shouldBe true
 
     val (listcode, listoutput) = _capture_stdout {
       launcher.run(Vector("runtime", "remote", "list"))
     }
     _assert_equals(listcode, 0)
-    assert(listoutput.contains("0.2.21-SNAPSHOT"))
+    listoutput.contains("0.2.21-SNAPSHOT") shouldBe true
   }
 
   def runtimeCurrentWarnsWhenCachedRecommendedIsStale(): Unit = _with_temp_paths { paths =>
@@ -179,9 +345,9 @@ final class CozyLauncherSpec {
 
     _assert_equals(code, 0)
     _assert_equals(stdout.trim, "0.2.20")
-    assert(stderr.contains("cached Cozy runtime catalog resolves recommended to 0.2.20"))
-    assert(stderr.contains("remote catalog resolves it to 0.2.21-SNAPSHOT"))
-    assert(stderr.contains("cozy runtime refresh"))
+    stderr.contains("cached Cozy runtime catalog resolves recommended to 0.2.20") shouldBe true
+    stderr.contains("remote catalog resolves it to 0.2.21-SNAPSHOT") shouldBe true
+    stderr.contains("cozy runtime refresh") shouldBe true
   }
 
   def runtimeVersionPrecedence(): Unit = _with_temp_paths { paths =>
@@ -208,7 +374,7 @@ final class CozyLauncherSpec {
     val launcher = new CozyLauncher(paths, FakeResolver(), FakeInvoker())
     launcher.run(Vector("runtime", "use", "0.2.20-SNAPSHOT"))
     _assert_equals(Files.readString(paths.projectVersion).trim, "0.2.20-SNAPSHOT")
-    assert(!Files.exists(paths.globalVersion))
+    Files.exists(paths.globalVersion) shouldBe false
   }
 
   def executeDelegatesToCozyRuntime(): Unit = _with_temp_paths { paths =>
@@ -262,17 +428,19 @@ final class CozyLauncherSpec {
 
   def developmentInvokersUseJavaDirect(): Unit = {
     val source = Files.readString(Path.of("src/main/scala/cozy/launcher/CozyRuntimeResolver.scala"))
-    assert(!source.contains("runMain cozy.Cozy"))
-    assert(!source.contains("new java.lang.ProcessBuilder(\"sbt\", \"--batch\", \"run\")"))
-    assert(source.contains("new java.lang.ProcessBuilder("))
-    assert(source.contains("\"java\""))
-    assert(source.contains("export Runtime / fullClasspath"))
+    source.contains("runMain cozy.Cozy") shouldBe false
+    source.contains("new java.lang.ProcessBuilder(\"sbt\", \"--batch\", \"run\")") shouldBe false
+    source.contains("new java.lang.ProcessBuilder(") shouldBe true
+    source.contains("\"java\"") shouldBe true
+    source.contains("export Runtime / fullClasspath") shouldBe true
   }
 
   def noRuntimeLibraryDependencies(): Unit = {
-    val build = Files.readString(Path.of("build.sbt"))
-    assert(!build.contains("libraryDependencies +="))
-    assert(!build.contains("libraryDependencies ++="))
+    val lines = Files.readString(Path.of("build.sbt")).linesIterator.toVector.map(_.trim)
+    def _runtime_library_dependency_(line: String): Boolean =
+      line.startsWith("libraryDependencies +=") && !line.contains("% Test") && !line.contains("% \"test\"")
+    lines.exists(_runtime_library_dependency_) shouldBe false
+    lines.exists(_.startsWith("libraryDependencies ++=")) shouldBe false
   }
 
   private def _capture_stdout(f: => Int): (Int, String) = {
@@ -309,7 +477,7 @@ final class CozyLauncherSpec {
   }
 
   private def _assert_equals[A](actual: A, expected: A): Unit =
-    assert(actual == expected, s"expected=$expected actual=$actual")
+    actual shouldBe expected
 
   private val _catalog_text: String =
     """schemaVersion: 1
