@@ -56,6 +56,10 @@ $PWD/conf/cozy/launcher.yaml
 $PWD/.cozy/launcher.yaml
 ```
 
+`conf/cozy/launcher.yaml` is shared launcher configuration when it is intentionally public.
+`.cozy/launcher.yaml` is a local sensitive launcher/runtime override and should normally be git-ignored.
+Normal Cozy/BoK operation settings belong in `conf/cozy/config.yaml`; local sensitive operation overrides belong in `.cozy/config.yaml`.
+
 Example:
 
 ```yaml

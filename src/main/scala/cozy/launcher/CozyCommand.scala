@@ -146,6 +146,9 @@ object CozyCommandParser {
       |  --runtime-dev-dir <dir> runs cozy.Cozy from a local checkout classpath with java direct execution.
       |  Version selectors: latest, latest-stable, latest-snapshot, newest, recommended.
       |  Launcher config loads from ~/.cozy/launcher.yaml, conf/cozy/launcher.yaml, then .cozy/launcher.yaml.
-      |  .cozy/config.yaml remains build/publish configuration and is not launcher configuration.
+      |  conf/cozy/launcher.yaml is shared launcher config when intentionally public.
+      |  .cozy/launcher.yaml is a local sensitive launcher/runtime override.
+      |  conf/cozy/config.yaml is main Cozy/BoK operation config.
+      |  .cozy/config.yaml is a local sensitive operation override.
       |""".stripMargin
 }
