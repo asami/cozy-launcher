@@ -2,7 +2,7 @@ package cozy.launcher
 
 /*
  * @since   Jun.  9, 2026
- * @version Jun. 20, 2026
+ * @version Jun. 27, 2026
  * @author  ASAMI, Tomoharu
  */
 sealed trait CozyCommand
@@ -144,6 +144,12 @@ object CozyCommandParser {
       |  The launcher selects a Cozy runtime from the runtime catalog, resolves it
       |  with Coursier, and invokes cozy.Cozy in the same JVM.
       |  --runtime-dev-dir <dir> runs cozy.Cozy from a local checkout classpath with java direct execution.
+      |  COZY_VERSION/COZY_RUNTIME_VERSION override the configured runtime version.
+      |  COZY_RUNTIME_DEV_DIR directly selects a local Cozy runtime checkout.
+      |  COZY_LAUNCHER_DEV_DIR directly selects a local cozy-launcher checkout.
+      |  COZY_USE_DEVELOPMENT=true activates development.launcher.dev-dir and development.runtime.dev-dir.
+      |  COZY_PROJECT_DIR is a compatibility alias for a development runtime checkout.
+      |  Config launcher.dev-dir/runtime.dev-dir are always active; development.* dev-dir values are development candidates.
       |  Version selectors: latest, latest-stable, latest-snapshot, newest, recommended.
       |  Launcher config loads from ~/.cozy/launcher.yaml, conf/cozy/launcher.yaml, then .cozy/launcher.yaml.
       |  conf/cozy/launcher.yaml is shared launcher config when intentionally public.

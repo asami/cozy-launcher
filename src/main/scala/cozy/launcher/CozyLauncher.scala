@@ -5,7 +5,7 @@ import java.nio.file.Files
 
 /*
  * @since   Jun.  9, 2026
- * @version Jun. 20, 2026
+ * @version Jun. 27, 2026
  * @author  ASAMI, Tomoharu
  */
 final class CozyLauncher(
@@ -13,12 +13,13 @@ final class CozyLauncher(
   runtimeresolver: CozyRuntimeResolver = CoursierCozyRuntimeResolver(),
   cozyinvoker: CozyInvoker = CozyInvoker(),
   launcherdevinvoker: LauncherDevInvoker = LauncherDevInvoker.System,
-  runtimeDevInvoker: CozyRuntimeDevInvoker = CozyRuntimeDevInvoker.System
+  runtimeDevInvoker: CozyRuntimeDevInvoker = CozyRuntimeDevInvoker.System,
+  environment: Map[String, String] = sys.env
 ) {
   def run(args: Vector[String]): Int = {
     val effectiveargs = _args_from_file().getOrElse(args)
     val (configfiles, commandargs) = _take_config_options(effectiveargs)
-    val config = LauncherConfig.load(paths, configfiles)
+    val config = LauncherConfig.load(paths, configfiles, environment)
     _delegate_launcher_dev_dir(config, effectiveargs) match {
       case Some(code) => return code
       case None => ()
@@ -48,7 +49,7 @@ final class CozyLauncher(
     config: LauncherConfig,
     args: Vector[String]
   ): Option[Int] =
-    if (sys.env.get("COZY_LAUNCHER_DEV_DELEGATED").contains("1"))
+    if (environment.get("COZY_LAUNCHER_DEV_DELEGATED").contains("1"))
       None
     else
       config.launcherDevDir.map { dir =>
@@ -227,7 +228,7 @@ final class CozyLauncher(
   }
 
   private def _args_from_file(): Option[Vector[String]] =
-    sys.env.get("COZY_LAUNCHER_ARGS_FILE").map { file =>
+    environment.get("COZY_LAUNCHER_ARGS_FILE").map { file =>
       val text = Files.readString(java.nio.file.Path.of(file), StandardCharsets.UTF_8)
       if (text.isEmpty)
         Vector.empty

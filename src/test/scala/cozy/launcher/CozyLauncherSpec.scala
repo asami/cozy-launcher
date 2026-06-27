@@ -7,7 +7,7 @@ import java.nio.file.{Files, Path}
 
 /*
  * @since   Jun.  9, 2026
- * @version Jun. 20, 2026
+ * @version Jun. 27, 2026
  * @author  ASAMI, Tomoharu
  */
 object CozyLauncherSpec {
@@ -19,6 +19,8 @@ object CozyLauncherSpec {
     spec.runtimeHelp()
     spec.configMerge()
     spec.configFileOptionOverridesProjectConfig()
+    spec.environmentSelectsDevelopmentRuntime()
+    spec.launcherDevelopmentBootstrapUsesDevelopmentRuntime()
     spec.runtimeCatalogSelection()
     spec.runtimeCatalogCommands()
     spec.runtimeCurrentWarnsWhenCachedRecommendedIsStale()
@@ -74,6 +76,14 @@ final class CozyLauncherSpec extends AnyWordSpec with Matchers with GivenWhenThe
         When("the launcher behavior is exercised")
         Then("the executable specification holds through scenario-specific expectations")
         executeUsesConfiguredRuntimeDevelopmentDirectory()
+      }
+
+      "environment selects development runtime" in {
+        environmentSelectsDevelopmentRuntime()
+      }
+
+      "launcher development bootstrap uses development runtime" in {
+        launcherDevelopmentBootstrapUsesDevelopmentRuntime()
       }
 
       "launcher dev dir delegates to development launcher" in {
@@ -288,6 +298,95 @@ final class CozyLauncherSpec extends AnyWordSpec with Matchers with GivenWhenThe
     _assert_equals(output.trim, "0.2.20-SNAPSHOT")
   }
 
+  def environmentSelectsDevelopmentRuntime(): Unit = _with_temp_paths { paths =>
+    Given("a project config contains development runtime and launcher candidates")
+    _write(paths.cwd.resolve(".cozy").resolve("launcher.yaml"),
+      """development:
+        |  launcher:
+        |    dev-dir: ../candidate-launcher
+        |  runtime:
+        |    dev-dir: ../candidate-runtime
+        |""".stripMargin)
+
+    When("the launcher loads config without the development flag")
+    val inert = LauncherConfig.load(paths, Vector.empty, Map.empty)
+
+    Then("the development candidates are recorded but not activated")
+    _assert_equals(inert.launcherDevDir, None)
+    _assert_equals(inert.runtimeDevDir, None)
+    _assert_equals(inert.developmentLauncherDevDir, Some("../candidate-launcher"))
+    _assert_equals(inert.developmentRuntimeDevDir, Some("../candidate-runtime"))
+
+    When("the launcher loads config with development enabled")
+    val active = LauncherConfig.load(paths, Vector.empty, Map("COZY_USE_DEVELOPMENT" -> "true"))
+
+    Then("the development launcher and runtime candidates become active")
+    _assert_equals(active.launcherDevDir, Some("../candidate-launcher"))
+    _assert_equals(active.runtimeDevDir, Some("../candidate-runtime"))
+
+    When("explicit environment overrides are supplied")
+    val env = LauncherConfig.load(paths, Vector.empty, Map(
+      "COZY_VERSION" -> "0.2.23-SNAPSHOT",
+      "COZY_RUNTIME_DEV_DIR" -> "../env-runtime",
+      "COZY_LAUNCHER_DEV_DIR" -> "../env-launcher"
+    ))
+
+    Then("explicit runtime and launcher development directories take precedence")
+    _assert_equals(env.runtimeVersion, Some("0.2.23-SNAPSHOT"))
+    _assert_equals(env.runtimeDevDir, Some("../env-runtime"))
+    _assert_equals(env.launcherDevDir, Some("../env-launcher"))
+
+    When("a delegated development launcher executes a runtime command")
+    val resolver = FakeResolver()
+    val invoker = FakeInvoker()
+    val devinvoker = FakeRuntimeDevInvoker()
+    val launcher = new CozyLauncher(paths, resolver, invoker, FakeLauncherDevInvoker(), devinvoker, Map(
+      "COZY_USE_DEVELOPMENT" -> "true",
+      "COZY_LAUNCHER_DEV_DELEGATED" -> "1"
+    ))
+    launcher.run(Vector("sbt-bridge", "v1"))
+
+    Then("the runtime checkout is invoked without resolving a published runtime artifact")
+    _assert_equals(resolver.resolvedClasspaths, Vector.empty)
+    _assert_equals(devinvoker.devDir, Some(paths.cwd.resolve("../candidate-runtime").normalize.toAbsolutePath.normalize))
+  }
+
+  def launcherDevelopmentBootstrapUsesDevelopmentRuntime(): Unit = _with_temp_paths { paths =>
+    Given("a launcher config contains a bootstrap launcher dev dir and a gated runtime dev dir")
+    _write(paths.cwd.resolve(".cozy").resolve("launcher.yaml"),
+      """cozy:
+        |  launcher:
+        |    dev:
+        |      dir: ../candidate-launcher
+        |development:
+        |  runtime:
+        |    dev-dir: ../candidate-runtime
+        |""".stripMargin)
+
+    When("the launcher bootstrap config is loaded before development delegation")
+    val bootstrap = LauncherConfig.load(paths, Vector.empty, Map.empty)
+
+    Then("only the bootstrap launcher dev dir is immediately active")
+    _assert_equals(bootstrap.launcherDevDir, Some("../candidate-launcher"))
+    _assert_equals(bootstrap.runtimeDevDir, None)
+
+    When("the delegated development launcher executes a Cozy runtime command with development enabled")
+    val resolver = FakeResolver()
+    val invoker = FakeInvoker()
+    val devinvoker = FakeRuntimeDevInvoker()
+    val launcher = new CozyLauncher(paths, resolver, invoker, FakeLauncherDevInvoker(), devinvoker, Map(
+      "COZY_USE_DEVELOPMENT" -> "true",
+      "COZY_LAUNCHER_DEV_DELEGATED" -> "1"
+    ))
+    launcher.run(Vector("sbt-bridge", "v1"))
+
+    Then("the runtime command uses the configured runtime checkout without resolving a published runtime artifact")
+    _assert_equals(resolver.resolvedClasspaths, Vector.empty)
+    _assert_equals(invoker.lastArgs, Vector.empty)
+    _assert_equals(devinvoker.devDir, Some(paths.cwd.resolve("../candidate-runtime").normalize.toAbsolutePath.normalize))
+    _assert_equals(devinvoker.args, Vector("sbt-bridge", "v1"))
+  }
+
   def runtimeCatalogSelection(): Unit = _with_temp_paths { paths =>
     val catalogfile = paths.cwd.resolve("runtime-catalog.yaml")
     _write(catalogfile, _catalog_text)
@@ -389,26 +488,26 @@ final class CozyLauncherSpec extends AnyWordSpec with Matchers with GivenWhenThe
   def executeUsesCliRuntimeDevelopmentDirectory(): Unit = _with_temp_paths { paths =>
     val resolver = FakeResolver()
     val invoker = FakeInvoker()
-    val devInvoker = FakeRuntimeDevInvoker()
-    val launcher = new CozyLauncher(paths, resolver, invoker, FakeLauncherDevInvoker(), devInvoker)
+    val devinvoker = FakeRuntimeDevInvoker()
+    val launcher = new CozyLauncher(paths, resolver, invoker, FakeLauncherDevInvoker(), devinvoker)
     launcher.run(Vector("--runtime-dev-dir", "../cozy", "sbt-bridge", "v1", "--request", "/tmp/request.json"))
     _assert_equals(resolver.resolvedClasspaths, Vector.empty)
     _assert_equals(invoker.lastArgs, Vector.empty)
-    _assert_equals(devInvoker.devDir, Some(paths.cwd.resolve("../cozy").normalize.toAbsolutePath.normalize))
-    _assert_equals(devInvoker.args, Vector("sbt-bridge", "v1", "--request", "/tmp/request.json"))
+    _assert_equals(devinvoker.devDir, Some(paths.cwd.resolve("../cozy").normalize.toAbsolutePath.normalize))
+    _assert_equals(devinvoker.args, Vector("sbt-bridge", "v1", "--request", "/tmp/request.json"))
   }
 
   def executeUsesConfiguredRuntimeDevelopmentDirectory(): Unit = _with_temp_paths { paths =>
     _write(paths.cwd.resolve(".cozy").resolve("launcher.yaml"), "runtime:\n  dev-dir: ../cozy\n")
     val resolver = FakeResolver()
     val invoker = FakeInvoker()
-    val devInvoker = FakeRuntimeDevInvoker()
-    val launcher = new CozyLauncher(paths, resolver, invoker, FakeLauncherDevInvoker(), devInvoker)
+    val devinvoker = FakeRuntimeDevInvoker()
+    val launcher = new CozyLauncher(paths, resolver, invoker, FakeLauncherDevInvoker(), devinvoker)
     launcher.run(Vector("sbt-bridge", "v1"))
     _assert_equals(resolver.resolvedClasspaths, Vector.empty)
     _assert_equals(invoker.lastArgs, Vector.empty)
-    _assert_equals(devInvoker.devDir, Some(paths.cwd.resolve("../cozy").normalize.toAbsolutePath.normalize))
-    _assert_equals(devInvoker.args, Vector("sbt-bridge", "v1"))
+    _assert_equals(devinvoker.devDir, Some(paths.cwd.resolve("../cozy").normalize.toAbsolutePath.normalize))
+    _assert_equals(devinvoker.args, Vector("sbt-bridge", "v1"))
   }
 
   def launcherDevDirDelegatesToDevelopmentLauncher(): Unit = _with_temp_paths { paths =>

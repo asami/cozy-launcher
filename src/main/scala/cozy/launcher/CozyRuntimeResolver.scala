@@ -4,10 +4,11 @@ import java.io.File
 import java.nio.charset.StandardCharsets
 import java.nio.file.{Files, Path}
 import scala.sys.process.*
+import scala.util.Try
 
 /*
  * @since   Jun.  9, 2026
- * @version Jun. 20, 2026
+ * @version Jun. 27, 2026
  * @author  ASAMI, Tomoharu
  */
 trait CozyRuntimeResolver {
@@ -83,7 +84,14 @@ final class CoursierCozyRuntimeResolver(
     paths: LauncherPaths,
     catalog: Option[RuntimeCatalog]
   ): Option[RuntimeCatalogVersion] =
-    catalog.map(_.resolve(version))
+    catalog.flatMap { c =>
+      Try(c.resolve(version)).toOption.orElse {
+        if (_is_dynamic_runtime_selector(version))
+          Some(c.resolve(version))
+        else
+          None
+      }
+    }
 
   private def _fallback_version(version: String, config: LauncherConfig): String =
     version match {
@@ -97,6 +105,12 @@ final class CoursierCozyRuntimeResolver(
         throw CozyException("failed to resolve recommended Cozy runtime version from runtime catalog")
       case x =>
         x
+    }
+
+  private def _is_dynamic_runtime_selector(selector: String): Boolean =
+    selector match {
+      case "recommended" | "latest" | "latest-stable" | "latest.release" | "latest-snapshot" | "newest" => true
+      case _ => false
     }
 
   private def _newest(config: LauncherConfig): String =
