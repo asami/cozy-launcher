@@ -131,11 +131,28 @@ final class CozyLauncher(
     catalogstore: RuntimeCatalogStore,
     config: LauncherConfig
   ): Int = {
-    val selector = store.current(None, config)
-    val current = runtimeresolver.resolveVersion(selector, config, paths)
-    println(current)
-    _warn_if_runtime_catalog_is_stale(selector, current, catalogstore, config)
-    0
+    config.runtimeDevDir match {
+      case Some(dir) =>
+        println(_development_runtime_version(paths.cwd.resolve(dir).normalize.toAbsolutePath.normalize))
+        0
+      case None =>
+        val selector = store.current(None, config)
+        val current = runtimeresolver.resolveVersion(selector, config, paths)
+        println(current)
+        _warn_if_runtime_catalog_is_stale(selector, current, catalogstore, config)
+        0
+    }
+  }
+
+  private def _development_runtime_version(project: java.nio.file.Path): String = {
+    val build = project.resolve("build.sbt")
+    if (!Files.isRegularFile(build))
+      throw CozyException(s"Cozy runtime development directory has no build.sbt: ${project}")
+    val text = Files.readString(build, StandardCharsets.UTF_8)
+    val versionregex = """(?m)(?:ThisBuild\s*/\s*)?version\s*:=\s*"([^"\n]+)""".r
+    versionregex.findFirstMatchIn(text).map(_.group(1)).getOrElse(
+      throw CozyException(s"failed to read Cozy runtime development version from ${build}")
+    )
   }
 
   private def _warn_if_runtime_catalog_is_stale(

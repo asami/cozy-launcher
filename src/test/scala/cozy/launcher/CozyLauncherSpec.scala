@@ -15,6 +15,7 @@ object CozyLauncherSpec {
     val spec = new CozyLauncherSpec
     spec.parser()
     spec.runtimeVersion()
+    spec.runtimeCurrentUsesDevelopmentRuntime()
     spec.launcherVersion()
     spec.runtimeHelp()
     spec.configMerge()
@@ -109,6 +110,13 @@ final class CozyLauncherSpec extends AnyWordSpec with Matchers with GivenWhenThe
         When("the launcher behavior is exercised")
         Then("the executable specification holds through scenario-specific expectations")
         runtimeVersion()
+      }
+
+      "runtime current uses development runtime" in {
+        Given("a Cozy project config points to a runtime development checkout")
+        When("runtime current is requested")
+        Then("the launcher reports the development runtime version from build.sbt")
+        runtimeCurrentUsesDevelopmentRuntime()
       }
 
       "runtime help" in {
@@ -225,13 +233,33 @@ final class CozyLauncherSpec extends AnyWordSpec with Matchers with GivenWhenThe
     val invoker = FakeInvoker()
     val launcher = new CozyLauncher(paths, resolver, invoker)
 
-    val code = launcher.run(Vector("version"))
+    val (code, output) = _capture_stdout {
+      launcher.run(Vector("version"))
+    }
 
     _assert_equals(code, 0)
+    _assert_equals(output.trim, "")
     _assert_equals(resolver.resolvedClasspaths, Vector("recommended"))
     _assert_equals(invoker.lastArgs, Vector("version"))
     _assert_equals(CozyCommandParser.parse(Vector("version")), CozyCommand.Execute(Vector("version"), None, None))
     _assert_equals(CozyCommandParser.parse(Vector("--version")), CozyCommand.Execute(Vector("version"), None, None))
+  }
+
+  def runtimeCurrentUsesDevelopmentRuntime(): Unit = _with_temp_paths { paths =>
+    Given("a runtime development checkout declares its version in build.sbt")
+    val runtime = paths.cwd.resolve("../cozy-runtime").normalize
+    _write(runtime.resolve("build.sbt"), "ThisBuild / version := \"9.9.9-SNAPSHOT\"\n")
+    _write(paths.cwd.resolve(".cozy").resolve("launcher.yaml"), "runtime:\n  devDir: ../cozy-runtime\n")
+    val launcher = new CozyLauncher(paths, FakeResolver(), FakeInvoker())
+
+    When("runtime current is executed")
+    val (currentcode, currentoutput) = _capture_stdout {
+      launcher.run(Vector("runtime", "current"))
+    }
+
+    Then("the development runtime version is reported without resolving a published runtime")
+    _assert_equals(currentcode, 0)
+    _assert_equals(currentoutput.trim, "9.9.9-SNAPSHOT")
   }
 
   def launcherVersion(): Unit = _with_temp_paths { paths =>

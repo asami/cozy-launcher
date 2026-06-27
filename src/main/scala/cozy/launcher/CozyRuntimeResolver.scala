@@ -225,7 +225,7 @@ private object DevelopmentClasspath {
   def classpath(project: Path, exporter: RuntimeClasspathExporter): Vector[Path] = {
     val file = classpathFile(project)
     val text =
-      if (Files.isRegularFile(file) && Files.size(file) > 0L)
+      if (Files.isRegularFile(file) && Files.size(file) > 0L && !_is_stale(file, project))
         Files.readString(file, StandardCharsets.UTF_8).trim
       else {
         val exported = exporter.exportRuntimeClasspath(project)
@@ -241,6 +241,29 @@ private object DevelopmentClasspath {
 
   def classpathString(project: Path, exporter: RuntimeClasspathExporter): String =
     classpath(project, exporter).map(_.toString).mkString(File.pathSeparator)
+
+  private def _is_stale(file: Path, project: Path): Boolean = {
+    val generated = Files.getLastModifiedTime(file).toMillis
+    _build_inputs(project).exists(p => Files.getLastModifiedTime(p).toMillis > generated)
+  }
+
+  private def _build_inputs(project: Path): Vector[Path] = {
+    val root = project.resolve("build.sbt")
+    val projectdir = project.resolve("project")
+    val projectfiles =
+      if (Files.isDirectory(projectdir)) {
+        val stream = Files.list(projectdir)
+        try {
+          import scala.jdk.CollectionConverters.*
+          stream.iterator().asScala.toVector.filter(p => Files.isRegularFile(p) && p.getFileName.toString.endsWith(".sbt"))
+        } finally {
+          stream.close()
+        }
+      } else {
+        Vector.empty
+      }
+    (Vector(root).filter(Files.isRegularFile(_)) ++ projectfiles).distinct
+  }
 
   private def _classpath_to_paths(value: String): Vector[Path] =
     value.split(File.pathSeparator).toVector.map(_.trim).filter(_.nonEmpty).map(Path.of(_))
