@@ -2,6 +2,7 @@ package cozy.launcher
 
 import java.nio.charset.StandardCharsets
 import java.nio.file.{Files, Path}
+import org.goldenport.launcher.{LauncherConfigLoader => CoreLauncherConfigLoader, LauncherConfigParser => CoreLauncherConfigParser, LauncherCoreException, LauncherPaths => CoreLauncherPaths, LauncherProductSpec}
 
 /*
  * @since   Jun.  9, 2026
@@ -79,6 +80,8 @@ object LauncherConfig {
   )
   val DEFAULT_COURSIER_REPOSITORIES = Vector("ivy2Local", "central")
 
+  private val _product_spec = LauncherProductSpec.hiddenLauncherYaml("cozy", "COZY")
+
   def load(paths: LauncherPaths): LauncherConfig =
     load(paths, Vector.empty)
 
@@ -93,16 +96,15 @@ object LauncherConfig {
     configfiles: Vector[String],
     environment: Map[String, String]
   ): LauncherConfig = {
-    val global = loadFile(paths.globalConfig)
-    val project = loadFile(paths.projectConfig)
-    val projectlocal = loadFile(paths.projectLocalConfig)
-    val base = LauncherConfig()
-      .mergeHigher(global)
-      .mergeHigher(project)
-      .mergeHigher(projectlocal)
-    val explicit = configfiles.foldLeft(base) { (acc, file) =>
-      acc.mergeHigher(loadRequiredFile(paths.cwd.resolve(file).normalize.toAbsolutePath.normalize))
-    }
+    val corepaths = CoreLauncherPaths(home = paths.home, cwd = paths.cwd)
+    val explicit =
+      try {
+        CoreLauncherConfigLoader.load(corepaths, _product_spec, configfiles).foldLeft(LauncherConfig()) { (acc, source) =>
+          acc.mergeHigher(fromParsed(source.values))
+        }
+      } catch {
+        case e: LauncherCoreException => throw CozyException(e.getMessage, e.code)
+      }
     val development =
       if (_use_development(environment))
         explicit.withDevelopmentEnabled
@@ -194,104 +196,5 @@ object LauncherConfigParser {
     path: Path,
     text: String
   ): Map[String, Vector[String]] =
-    _file_type(path) match {
-      case "yaml" | "yml" => _parse_light_yaml(text)
-      case "properties" | "props" | "conf" => _parse_properties(text)
-      case other =>
-        throw CozyException(s"unsupported launcher config file type: .$other; use yaml, yml, properties, props, or conf")
-    }
-
-  private def _file_type(path: Path): String = {
-    val name = path.getFileName.toString
-    val i = name.lastIndexOf('.')
-    if (i >= 0 && i + 1 < name.length)
-      name.substring(i + 1).toLowerCase
-    else
-      "yaml"
-  }
-
-  private def _parse_properties(text: String): Map[String, Vector[String]] = {
-    var values = Map.empty[String, Vector[String]]
-    text.linesIterator.foreach { raw =>
-      val uncommented = _strip_comment(raw)
-      val trimmed = uncommented.trim
-      if (trimmed.nonEmpty) {
-        val idx = _key_value_index(trimmed)
-        if (idx >= 0) {
-          val key = trimmed.substring(0, idx).trim
-          val value = trimmed.substring(idx + 1).trim
-          _put_value(key, value, values).foreach(v => values = v)
-        }
-      }
-    }
-    values
-  }
-
-  private def _parse_light_yaml(text: String): Map[String, Vector[String]] = {
-    var values = Map.empty[String, Vector[String]]
-    var stack = Vector.empty[(Int, String)]
-    var pendingkey: Option[String] = None
-
-    def put(path: String, value: String): Unit =
-      _put_value(path, value, values).foreach(v => values = v)
-
-    text.linesIterator.foreach { raw =>
-      val uncommented = _strip_comment(raw)
-      if (uncommented.trim.nonEmpty) {
-        val indent = uncommented.takeWhile(_ == ' ').length
-        val trimmed = uncommented.trim
-        stack = stack.dropRight(stack.count(_._1 >= indent))
-        if (trimmed.startsWith("- ")) {
-          pendingkey.foreach(k => put(k, trimmed.drop(2)))
-        } else {
-          val idx = _key_value_index(trimmed)
-          if (idx >= 0) {
-            val key = trimmed.substring(0, idx).trim
-            val value = trimmed.substring(idx + 1).trim
-            val path = (stack.map(_._2) :+ key).mkString(".")
-            if (value.isEmpty) {
-              stack = stack :+ (indent, key)
-              pendingkey = Some(path)
-            } else {
-              put(path, value)
-              pendingkey = Some(path)
-            }
-          }
-        }
-      }
-    }
-    values
-  }
-
-  private def _put_value(
-    rawkey: String,
-    rawvalue: String,
-    values: Map[String, Vector[String]]
-  ): Option[Map[String, Vector[String]]] = {
-    val key = rawkey.trim
-    val value = _unquote(rawvalue.trim)
-    if (key.isEmpty || value.isEmpty)
-      None
-    else
-      Some(values.updated(key, values.getOrElse(key, Vector.empty) :+ value))
-  }
-
-  private def _strip_comment(line: String): String = {
-    val index = line.indexOf('#')
-    if (index >= 0) line.take(index) else line
-  }
-
-  private def _key_value_index(line: String): Int = {
-    val colon = line.indexOf(':')
-    val equals = line.indexOf('=')
-    if (colon < 0) equals
-    else if (equals < 0) colon
-    else math.min(colon, equals)
-  }
-
-  private def _unquote(value: String): String =
-    if (value.length >= 2 && ((value.head == '"' && value.last == '"') || (value.head == '\'' && value.last == '\'')))
-      value.substring(1, value.length - 1)
-    else
-      value
+    CoreLauncherConfigParser.parse(path, text)
 }

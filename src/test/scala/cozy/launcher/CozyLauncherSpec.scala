@@ -19,6 +19,7 @@ object CozyLauncherSpec {
     spec.runtimeHelp()
     spec.configMerge()
     spec.configFileOptionOverridesProjectConfig()
+    spec.workspaceRootConfigAppliesToNestedCwd()
     spec.environmentSelectsDevelopmentRuntime()
     spec.launcherDevelopmentBootstrapUsesDevelopmentRuntime()
     spec.runtimeCatalogSelection()
@@ -69,6 +70,13 @@ final class CozyLauncherSpec extends AnyWordSpec with Matchers with GivenWhenThe
         When("the launcher behavior is exercised")
         Then("the executable specification holds through scenario-specific expectations")
         configFileOptionOverridesProjectConfig()
+      }
+
+      "workspace root config applies to nested cwd" in {
+        Given("the cozy launcher scenario: workspace root config applies to nested cwd")
+        When("the launcher loads config from a nested scripted fixture directory")
+        Then("the executable specification holds through inherited root config")
+        workspaceRootConfigAppliesToNestedCwd()
       }
 
       "execute uses configured runtime development directory" in {
@@ -296,6 +304,25 @@ final class CozyLauncherSpec extends AnyWordSpec with Matchers with GivenWhenThe
     }
     _assert_equals(code, 0)
     _assert_equals(output.trim, "0.2.20-SNAPSHOT")
+  }
+
+  def workspaceRootConfigAppliesToNestedCwd(): Unit = _with_temp_paths { paths =>
+    val workspace = paths.cwd
+    val fixture = workspace.resolve("src").resolve("sbt-test").resolve("cozy").resolve("fixture")
+    _write(workspace.resolve(".cozy").resolve("launcher.yaml"),
+      """runtime:
+        |  version: root
+        |  dev-dir: ../cozy-runtime
+        |""".stripMargin)
+    _write(fixture.resolve(".cozy").resolve("launcher.yaml"),
+      """runtime:
+        |  version: fixture
+        |""".stripMargin)
+
+    val config = LauncherConfig.load(paths.withCwd(fixture))
+
+    _assert_equals(config.runtimeVersion, Some("fixture"))
+    _assert_equals(config.runtimeDevDir, Some("../cozy-runtime"))
   }
 
   def environmentSelectsDevelopmentRuntime(): Unit = _with_temp_paths { paths =>
@@ -527,19 +554,24 @@ final class CozyLauncherSpec extends AnyWordSpec with Matchers with GivenWhenThe
 
   def developmentInvokersUseJavaDirect(): Unit = {
     val source = Files.readString(Path.of("src/main/scala/cozy/launcher/CozyRuntimeResolver.scala"))
+    val core = Files.readString(Path.of("../goldenport-launcher-core/src/main/scala/org/goldenport/launcher/LauncherDevInvoker.scala"))
     source.contains("runMain cozy.Cozy") shouldBe false
     source.contains("new java.lang.ProcessBuilder(\"sbt\", \"--batch\", \"run\")") shouldBe false
-    source.contains("new java.lang.ProcessBuilder(") shouldBe true
-    source.contains("\"java\"") shouldBe true
+    core.contains("new java.lang.ProcessBuilder(") shouldBe true
+    core.contains("\"java\"") shouldBe true
     source.contains("export Runtime / fullClasspath") shouldBe true
   }
 
   def noRuntimeLibraryDependencies(): Unit = {
     val lines = Files.readString(Path.of("build.sbt")).linesIterator.toVector.map(_.trim)
     def _runtime_library_dependency_(line: String): Boolean =
-      line.startsWith("libraryDependencies +=") && !line.contains("% Test") && !line.contains("% \"test\"")
+      line.contains("libraryDependencies") &&
+        line.contains("\"") &&
+        !line.contains("goldenport-launcher-core") &&
+        !line.contains("% Test") &&
+        !line.contains("% \"test\"")
     lines.exists(_runtime_library_dependency_) shouldBe false
-    lines.exists(_.startsWith("libraryDependencies ++=")) shouldBe false
+    lines.exists(_.contains("goldenport-launcher-core")) shouldBe true
   }
 
   private def _capture_stdout(f: => Int): (Int, String) = {

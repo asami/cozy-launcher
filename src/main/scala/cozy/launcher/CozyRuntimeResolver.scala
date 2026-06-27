@@ -5,6 +5,7 @@ import java.nio.charset.StandardCharsets
 import java.nio.file.{Files, Path}
 import scala.sys.process.*
 import scala.util.Try
+import org.goldenport.launcher.{LauncherDevInvoker => CoreLauncherDevInvoker}
 
 /*
  * @since   Jun.  9, 2026
@@ -255,33 +256,16 @@ object LauncherDevInvoker {
       if (!Files.isDirectory(devdir) || !Files.isRegularFile(devdir.resolve("build.sbt")))
         throw CozyException(s"cozy launcher development directory not found: ${devdir}")
       val classpath = DevelopmentClasspath.classpathString(devdir, SbtRuntimeClasspathExporter)
-      val argsfile = _write_args_file(args)
-      try {
-        val builder = new java.lang.ProcessBuilder(
-          "java",
-          "-cp",
-          classpath,
-          "cozy.launcher.CozyLauncherMain"
-        )
-        builder.directory(Path.of(sys.props("user.dir")).toAbsolutePath.normalize.toFile)
-        builder.inheritIO()
-        builder.environment().put("COZY_LAUNCHER_DEV_DELEGATED", "1")
-        builder.environment().put("COZY_LAUNCHER_ARGS_FILE", argsfile.toString)
-        builder.start().waitFor()
-      } finally {
-        Files.deleteIfExists(argsfile)
-      }
-    }
-
-    private def _write_args_file(args: Vector[String]): Path = {
-      val argsfile = Files.createTempFile("cozy-launcher-args-", ".bin")
-      val payload =
-        if (args.isEmpty)
-          ""
-        else
-          args.mkString("", "\u0000", "\u0000")
-      Files.write(argsfile, payload.getBytes(StandardCharsets.UTF_8))
-      argsfile
+      CoreLauncherDevInvoker.invokeJavaMain(
+        productname = "cozy",
+        devdir = devdir,
+        classpath = classpath,
+        mainclass = "cozy.launcher.CozyLauncherMain",
+        args = args,
+        cwd = Path.of(sys.props("user.dir")).toAbsolutePath.normalize,
+        environment = Map("COZY_LAUNCHER_DEV_DELEGATED" -> "1"),
+        argsFileEnvironmentKey = "COZY_LAUNCHER_ARGS_FILE"
+      )
     }
   }
 }

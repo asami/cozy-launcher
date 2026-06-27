@@ -52,9 +52,15 @@ Launcher configuration is read from:
 
 ```text
 ~/.cozy/launcher.yaml
+ancestor conf/cozy/launcher.yaml and .cozy/launcher.yaml files, outermost first
 $PWD/conf/cozy/launcher.yaml
 $PWD/.cozy/launcher.yaml
 ```
+
+Ancestor discovery lets a workspace such as `cncf-samples` or sbt scripted
+tests keep one root `.cozy/launcher.yaml` for nested sample and fixture
+directories. A nested directory can still override the inherited settings with
+its own `conf/cozy/launcher.yaml` or `.cozy/launcher.yaml`.
 
 `conf/cozy/launcher.yaml` is shared launcher configuration when it is intentionally public.
 `.cozy/launcher.yaml` is a local sensitive launcher/runtime override and should normally be git-ignored.
