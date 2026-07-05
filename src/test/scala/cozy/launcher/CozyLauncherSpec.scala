@@ -282,6 +282,9 @@ final class CozyLauncherSpec extends AnyWordSpec with Matchers with GivenWhenThe
     _assert_equals(invoker.lastArgs, Vector("--help"))
     output.contains("Launcher help:") shouldBe true
     output.contains("cozy launcher help") shouldBe true
+    output.contains("[--runtime <version>] [--runtime-dev-dir <dir>]") shouldBe true
+    output.contains("ancestor conf/cozy/launcher.yaml and .cozy/launcher.yaml") shouldBe true
+    output.contains("runtime.dev-dir is the configuration equivalent of --runtime-dev-dir") shouldBe true
     _assert_equals(CozyCommandParser.parse(Vector("help")), CozyCommand.RuntimeHelp)
     _assert_equals(CozyCommandParser.parse(Vector("--help")), CozyCommand.RuntimeHelp)
     _assert_equals(CozyCommandParser.parse(Vector("launcher", "help")), CozyCommand.LauncherHelp)

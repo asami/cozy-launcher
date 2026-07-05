@@ -121,7 +121,7 @@ object CozyCommandParser {
 
   val helpText: String =
     """Usage:
-      |  cozy [--runtime <version>] <cozy-args...>
+      |  cozy [--runtime <version>] [--runtime-dev-dir <dir>] <cozy-args...>
       |  cozy version
       |  cozy --version
       |  cozy launcher version
@@ -144,14 +144,16 @@ object CozyCommandParser {
       |  The launcher selects a Cozy runtime from the runtime catalog, resolves it
       |  with Coursier, and invokes cozy.Cozy in the same JVM.
       |  --runtime-dev-dir <dir> runs cozy.Cozy from a local checkout classpath with java direct execution.
+      |  Config runtime.dev-dir is the configuration equivalent of --runtime-dev-dir.
       |  COZY_VERSION/COZY_RUNTIME_VERSION override the configured runtime version.
       |  COZY_RUNTIME_DEV_DIR directly selects a local Cozy runtime checkout.
       |  COZY_LAUNCHER_DEV_DIR directly selects a local cozy-launcher checkout.
       |  COZY_USE_DEVELOPMENT=true activates development.launcher.dev-dir and development.runtime.dev-dir.
       |  COZY_PROJECT_DIR is a compatibility alias for a development runtime checkout.
       |  Config launcher.dev-dir/runtime.dev-dir are always active; development.* dev-dir values are development candidates.
-      |  Version selectors: latest, latest-stable, latest-snapshot, newest, recommended.
-      |  Launcher config loads from ~/.cozy/launcher.yaml, conf/cozy/launcher.yaml, then .cozy/launcher.yaml.
+      |  Version selectors: recommended, latest, latest-stable, latest-snapshot, newest.
+      |  Runtime catalog defaults to https://www.simplemodeling.org/repository/cozy/runtime-catalog.yaml.
+      |  Launcher config loads from ~/.cozy/launcher.yaml, ancestor conf/cozy/launcher.yaml and .cozy/launcher.yaml files, then cwd conf/cozy/launcher.yaml and .cozy/launcher.yaml.
       |  conf/cozy/launcher.yaml is shared launcher config when intentionally public.
       |  .cozy/launcher.yaml is a local sensitive launcher/runtime override.
       |  conf/cozy/config.yaml is main Cozy/BoK operation config.
