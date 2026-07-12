@@ -6,7 +6,7 @@ import org.goldenport.launcher.{LauncherConfigLoader => CoreLauncherConfigLoader
 
 /*
  * @since   Jun.  9, 2026
- * @version Jun. 27, 2026
+ * @version Jul. 13, 2026
  * @author  ASAMI, Tomoharu
  */
 final case class LauncherConfig(
@@ -14,6 +14,9 @@ final case class LauncherConfig(
   runtimeVersion: Option[String] = None,
   runtimeCatalogUrl: Option[String] = None,
   runtimeDevDir: Option[String] = None,
+  developmentEnabled: Option[Boolean] = None,
+  developmentLauncherEnabled: Option[Boolean] = None,
+  developmentRuntimeEnabled: Option[Boolean] = None,
   developmentLauncherDevDir: Option[String] = None,
   developmentRuntimeDevDir: Option[String] = None,
   mavenRepositories: Vector[String] = Vector.empty,
@@ -25,6 +28,9 @@ final case class LauncherConfig(
       runtimeVersion = higher.runtimeVersion.orElse(runtimeVersion),
       runtimeCatalogUrl = higher.runtimeCatalogUrl.orElse(runtimeCatalogUrl),
       runtimeDevDir = higher.runtimeDevDir.orElse(runtimeDevDir),
+      developmentEnabled = higher.developmentEnabled.orElse(developmentEnabled),
+      developmentLauncherEnabled = higher.developmentLauncherEnabled.orElse(developmentLauncherEnabled),
+      developmentRuntimeEnabled = higher.developmentRuntimeEnabled.orElse(developmentRuntimeEnabled),
       developmentLauncherDevDir = higher.developmentLauncherDevDir.orElse(developmentLauncherDevDir),
       developmentRuntimeDevDir = higher.developmentRuntimeDevDir.orElse(developmentRuntimeDevDir),
       mavenRepositories = _merge_list(mavenRepositories, higher.mavenRepositories),
@@ -37,11 +43,38 @@ final case class LauncherConfig(
       coursierRepositories = _merge_catalog_list(coursierRepositories, catalog.coursierRepositories, LauncherConfig.DEFAULT_COURSIER_REPOSITORIES)
     )
 
-  def withDevelopmentEnabled: LauncherConfig =
+  def isDevelopmentLauncherEnabled: Boolean =
+    developmentLauncherEnabled.orElse(developmentEnabled).contains(true)
+
+  def isDevelopmentRuntimeEnabled: Boolean =
+    developmentRuntimeEnabled.orElse(developmentEnabled).contains(true)
+
+  def withDevelopmentSelection: LauncherConfig =
     copy(
-      launcherDevDir = launcherDevDir.orElse(developmentLauncherDevDir),
-      runtimeDevDir = runtimeDevDir.orElse(developmentRuntimeDevDir)
+      launcherDevDir = _select_development_directory(
+        isDevelopmentLauncherEnabled,
+        launcherDevDir,
+        developmentLauncherDevDir,
+        "development.launcher.dev-dir"
+      ),
+      runtimeDevDir = _select_development_directory(
+        isDevelopmentRuntimeEnabled,
+        runtimeDevDir,
+        developmentRuntimeDevDir,
+        "development.runtime.dev-dir"
+      )
     )
+
+  private def _select_development_directory(
+    enabled: Boolean,
+    direct: Option[String],
+    candidate: Option[String],
+    configkey: String
+  ): Option[String] =
+    if (enabled)
+      direct.orElse(candidate).orElse(throw CozyException(s"$configkey is required when its development switch is enabled"))
+    else
+      direct
 
   def normalizedWithDefaults: LauncherConfig =
     copy(
@@ -105,12 +138,8 @@ object LauncherConfig {
       } catch {
         case e: LauncherCoreException => throw CozyException(e.getMessage, e.code)
       }
-    val development =
-      if (_use_development(environment))
-        explicit.withDevelopmentEnabled
-      else
-        explicit
-    development.mergeHigher(fromEnvironment(environment)).normalizedWithDefaults
+    val withoverrides = explicit.mergeHigher(fromEnvironment(environment))
+    withoverrides.withDevelopmentSelection.normalizedWithDefaults
   }
 
   def loadFile(path: Path): LauncherConfig =
@@ -132,12 +161,21 @@ object LauncherConfig {
       keys.toVector.flatMap(k => values.getOrElse(k, Vector.empty)).headOption.map(_.trim).filter(_.nonEmpty)
     def _all_(keys: String*): Vector[String] =
       keys.toVector.flatMap(k => values.getOrElse(k, Vector.empty)).map(_.trim).filter(_.nonEmpty).distinct
+    def _boolean_(keys: String*): Option[Boolean] =
+      _first_(keys*).map {
+        case "true" | "yes" | "on" | "1" => true
+        case "false" | "no" | "off" | "0" => false
+        case other => throw CozyException(s"invalid boolean config value: $other")
+      }
 
     LauncherConfig(
       launcherDevDir = _first_("cozy.launcher.dev.dir", "cozy.launcher.dev-dir", "cozy.launcher.devDir", "launcher.dev.dir", "launcher.dev-dir", "launcher.devDir"),
       runtimeVersion = _first_("runtime.version", "cozy.runtime.version", "version"),
       runtimeCatalogUrl = _first_("runtime.catalog.url", "cozy.runtime.catalog.url", "catalog.url"),
       runtimeDevDir = _first_("runtime.dev-dir", "runtime.dev_dir", "runtime.devDir", "runtime.dev.dir", "cozy.runtime.dev-dir", "cozy.runtime.dev_dir", "cozy.runtime.devDir", "cozy.runtime.dev.dir"),
+      developmentEnabled = _boolean_("development.enabled", "cozy.development.enabled"),
+      developmentLauncherEnabled = _boolean_("development.launcher.enabled", "cozy.development.launcher.enabled"),
+      developmentRuntimeEnabled = _boolean_("development.runtime.enabled", "cozy.development.runtime.enabled"),
       developmentLauncherDevDir = _first_("development.launcher.dev-dir", "development.launcher.dev_dir", "development.launcher.devDir", "development.launcher.dev.dir", "cozy.development.launcher.dev-dir", "cozy.development.launcher.dev_dir", "cozy.development.launcher.devDir", "cozy.development.launcher.dev.dir"),
       developmentRuntimeDevDir = _first_("development.runtime.dev-dir", "development.runtime.dev_dir", "development.runtime.devDir", "development.runtime.dev.dir", "cozy.development.runtime.dev-dir", "cozy.development.runtime.dev_dir", "cozy.development.runtime.devDir", "cozy.development.runtime.dev.dir"),
       mavenRepositories = _all_("repositories.maven", "cozy.repository.maven"),
@@ -146,37 +184,24 @@ object LauncherConfig {
   }
 
   def fromEnvironment(environment: Map[String, String] = sys.env): LauncherConfig = {
-    val usedevelopment = _use_development(environment)
-    val runtimedevdir = _env_first(environment, "COZY_RUNTIME_DEV_DIR").orElse {
-      if (usedevelopment)
-        _env_first(environment, "COZY_PROJECT_DIR")
-      else
-        None
-    }
     LauncherConfig(
       launcherDevDir = _env_first(environment, "COZY_LAUNCHER_DEV_DIR"),
       runtimeVersion = _env_first(environment, "COZY_RUNTIME_VERSION", "COZY_VERSION"),
-      runtimeDevDir = runtimedevdir
+      runtimeDevDir = _env_first(environment, "COZY_RUNTIME_DEV_DIR")
     )
   }
 
-  private def _use_development(environment: Map[String, String]): Boolean =
-    _env_first(environment, "COZY_USE_DEVELOPMENT").exists(_truthy)
-
   private def _env_first(environment: Map[String, String], keys: String*): Option[String] =
     keys.toVector.flatMap(k => environment.get(k)).headOption.map(_.trim).filter(_.nonEmpty)
-
-  private def _truthy(value: String): Boolean =
-    value.trim.toLowerCase match {
-      case "true" | "yes" | "on" | "1" => true
-      case _ => false
-    }
 
   def render(config: LauncherConfig): String = {
     val c = config.normalizedWithDefaults
     val runtime = c.runtimeVersion.getOrElse("(not configured)")
     val catalog = c.runtimeCatalogUrl.getOrElse("(not configured)")
     val runtimedevdir = c.runtimeDevDir.getOrElse("(not configured)")
+    val developmentenabled = c.developmentEnabled.getOrElse(false)
+    val developmentlauncherenabled = c.isDevelopmentLauncherEnabled
+    val developmentruntimeenabled = c.isDevelopmentRuntimeEnabled
     val developmentlauncherdevdir = c.developmentLauncherDevDir.getOrElse("(not configured)")
     val developmentruntimedevdir = c.developmentRuntimeDevDir.getOrElse("(not configured)")
     val mavens = c.mavenRepositories.mkString(", ")
@@ -184,7 +209,10 @@ object LauncherConfig {
     s"""runtime.version: $runtime
        |runtime.catalog.url: $catalog
        |runtime.devDir: $runtimedevdir
+       |development.enabled: $developmentenabled
+       |development.launcher.enabled: $developmentlauncherenabled
        |development.launcher.devDir: $developmentlauncherdevdir
+       |development.runtime.enabled: $developmentruntimeenabled
        |development.runtime.devDir: $developmentruntimedevdir
        |repositories.maven: $mavens
        |repositories.coursier: $coursiers""".stripMargin

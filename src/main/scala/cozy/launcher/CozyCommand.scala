@@ -2,7 +2,7 @@ package cozy.launcher
 
 /*
  * @since   Jun.  9, 2026
- * @version Jun. 27, 2026
+ * @version Jul. 13, 2026
  * @author  ASAMI, Tomoharu
  */
 sealed trait CozyCommand
@@ -148,9 +148,10 @@ object CozyCommandParser {
       |  COZY_VERSION/COZY_RUNTIME_VERSION override the configured runtime version.
       |  COZY_RUNTIME_DEV_DIR directly selects a local Cozy runtime checkout.
       |  COZY_LAUNCHER_DEV_DIR directly selects a local cozy-launcher checkout.
-      |  COZY_USE_DEVELOPMENT=true activates development.launcher.dev-dir and development.runtime.dev-dir.
-      |  COZY_PROJECT_DIR is a compatibility alias for a development runtime checkout.
-      |  Config launcher.dev-dir/runtime.dev-dir are always active; development.* dev-dir values are development candidates.
+      |  Config development.enabled=true activates development.launcher.dev-dir and development.runtime.dev-dir.
+      |  Config development.launcher.enabled and development.runtime.enabled override the common development switch independently.
+      |  An enabled development selection requires its dev-dir unless a direct environment override supplies one.
+      |  Config launcher.dev-dir/runtime.dev-dir are always active; development.* dev-dir values are switchable development candidates.
       |  Version selectors: recommended, latest, latest-stable, latest-snapshot, newest.
       |  Runtime catalog defaults to https://www.simplemodeling.org/repository/cozy/runtime-catalog.yaml.
       |  Launcher config loads from ~/.cozy/launcher.yaml, ancestor conf/cozy/launcher.yaml and .cozy/launcher.yaml files, then cwd conf/cozy/launcher.yaml and .cozy/launcher.yaml.

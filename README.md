@@ -69,11 +69,17 @@ Normal Cozy/BoK operation settings belong in `conf/cozy/config.yaml`; local sens
 Example:
 
 ```yaml
+development:
+  enabled: true
+  launcher:
+    dev-dir: /Users/asami/src/dev2026/cozy-launcher
+  runtime:
+    dev-dir: /Users/asami/src/dev2025/cozy
+
 runtime:
   version: recommended
   catalog:
     url: https://www.simplemodeling.org/repository/cozy/runtime-catalog.yaml
-  dev-dir: /path/to/cozy
 
 repositories:
   coursier:
@@ -82,6 +88,42 @@ repositories:
   maven:
     - https://www.simplemodeling.org/repository/maven
 ```
+
+`development.enabled` is the single switch for the launcher and runtime
+development checkouts in this file. Set it to `false` to retain the configured
+candidate paths while using the installed launcher and selected published
+runtime. No shell environment switch is required. Higher-precedence project
+launcher configuration may override the global switch.
+
+The launcher and runtime sections can override the common switch independently.
+For example, this uses the development Cozy launcher with the published Cozy
+runtime while retaining both checkout paths:
+
+```yaml
+development:
+  enabled: false
+  launcher:
+    enabled: true
+    dev-dir: /Users/asami/src/dev2026/cozy-launcher
+  runtime:
+    enabled: false
+    dev-dir: /Users/asami/src/dev2025/cozy
+```
+
+Section `enabled` values take precedence over `development.enabled`.
+
+Direct `launcher.dev-dir`, `runtime.dev-dir`, CLI development-directory options,
+and their direct environment equivalents remain explicit always-active
+overrides. In normal operation, `launcher.yaml` is the single place that
+controls development selection; CLI and environment overrides are reserved for
+explicit emergency control. Use `development.*` for paths controlled by the
+file switch.
+
+When an effective launcher or runtime development switch is `true`, its
+corresponding `dev-dir` is required. A direct environment directory also
+satisfies this configuration-time requirement; CLI options may override a valid
+selection when the command is processed. Missing directories fail during
+launcher configuration instead of silently selecting a published implementation.
 
 `.cozy/config.yaml` remains Cozy build/publish configuration and is not read as
 launcher configuration.
