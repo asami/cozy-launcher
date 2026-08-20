@@ -5,7 +5,8 @@ import java.nio.file.Files
 
 /*
  * @since   Jun.  9, 2026
- * @version Jun. 27, 2026
+ *  version Jun. 27, 2026
+ * @version Aug. 20, 2026
  * @author  ASAMI, Tomoharu
  */
 final class CozyLauncher(
@@ -185,15 +186,27 @@ final class CozyLauncher(
     command: CozyCommand.Execute,
     config: LauncherConfig
   ): Int = {
-    command.runtimeDevDir.orElse(config.runtimeDevDir) match {
+    command.runtimeDevDir match {
       case Some(dir) =>
         val path = paths.cwd.resolve(dir).normalize.toAbsolutePath.normalize
         runtimeDevInvoker.invoke(path, command.args)
       case None =>
-        val store = RuntimeVersionStore(paths)
-        val runtimeversion = store.current(command.runtimeVersion, config)
-        val classpath = runtimeresolver.resolve(runtimeversion, config, paths)
-        cozyinvoker.invoke(classpath, command.args)
+        command.runtimeVersion match {
+          case Some(runtimeversion) =>
+            val classpath = runtimeresolver.resolve(runtimeversion, config, paths)
+            cozyinvoker.invoke(classpath, command.args)
+          case None =>
+            config.runtimeDevDir match {
+              case Some(dir) =>
+                val path = paths.cwd.resolve(dir).normalize.toAbsolutePath.normalize
+                runtimeDevInvoker.invoke(path, command.args)
+              case None =>
+                val store = RuntimeVersionStore(paths)
+                val runtimeversion = store.current(None, config)
+                val classpath = runtimeresolver.resolve(runtimeversion, config, paths)
+                cozyinvoker.invoke(classpath, command.args)
+            }
+        }
     }
   }
 

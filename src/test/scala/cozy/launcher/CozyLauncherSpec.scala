@@ -4,10 +4,12 @@ import org.scalatest.GivenWhenThen
 import org.scalatest.matchers.should.Matchers
 import org.scalatest.wordspec.AnyWordSpec
 import java.nio.file.{Files, Path}
+import java.nio.file.attribute.FileTime
 
 /*
  * @since   Jun.  9, 2026
- * @version Jul. 13, 2026
+ *  version Jul. 13, 2026
+ * @version Aug. 20, 2026
  * @author  ASAMI, Tomoharu
  */
 object CozyLauncherSpec {
@@ -27,13 +29,16 @@ object CozyLauncherSpec {
     spec.runtimeCatalogCommands()
     spec.runtimeCurrentWarnsWhenCachedRecommendedIsStale()
     spec.runtimeVersionPrecedence()
+    spec.projectYamlRuntimeSelectionOverridesSwitchableDevelopmentRuntime()
     spec.runtimeUseWritesExpectedFiles()
     spec.runtimeUseAutoSelectsProjectWhenCozyDirectoryExists()
     spec.executeDelegatesToCozyRuntime()
     spec.executeUsesCliRuntimeDevelopmentDirectory()
+    spec.executeExplicitRuntimeVersionOverridesConfiguredDevelopmentRuntime()
     spec.executeUsesConfiguredRuntimeDevelopmentDirectory()
     spec.launcherDevDirDelegatesToDevelopmentLauncher()
     spec.developmentInvokersUseJavaDirect()
+    spec.developmentClasspathRefreshesOnlyForRelevantInputs()
     spec.noRuntimeLibraryDependencies()
     println("CozyLauncherSpec: OK")
   }
@@ -154,6 +159,13 @@ final class CozyLauncherSpec extends AnyWordSpec with Matchers with GivenWhenThe
         runtimeVersionPrecedence()
       }
 
+      "project.yaml declared runtime overrides switchable development runtime" in {
+        Given("a project declares Cozy 0.3.1 while global development runtime selection is enabled")
+        When("the launcher loads the project configuration and executes a runtime command")
+        Then("the declared published runtime is selected without invoking the switchable checkout")
+        projectYamlRuntimeSelectionOverridesSwitchableDevelopmentRuntime()
+      }
+
       "runtime use writes expected files" in {
         Given("the cozy launcher scenario: runtime use writes expected files")
         When("the launcher behavior is exercised")
@@ -185,6 +197,13 @@ final class CozyLauncherSpec extends AnyWordSpec with Matchers with GivenWhenThe
         executeUsesCliRuntimeDevelopmentDirectory()
       }
 
+      "explicit runtime version overrides configured development runtime" in {
+        Given("a global launcher config enables a runtime development candidate")
+        When("the launcher executes with an explicit runtime version")
+        Then("the requested published runtime is resolved without invoking the candidate checkout")
+        executeExplicitRuntimeVersionOverridesConfiguredDevelopmentRuntime()
+      }
+
     }
 
     "development runtime operations" which {
@@ -193,6 +212,13 @@ final class CozyLauncherSpec extends AnyWordSpec with Matchers with GivenWhenThe
         When("the launcher behavior is exercised")
         Then("the executable specification holds through scenario-specific expectations")
         developmentInvokersUseJavaDirect()
+      }
+
+      "development classpath cache follows relevant source freshness" in {
+        Given("cached development classpaths and build, project, source, and generated inputs")
+        When("the launcher evaluates equal, newer relevant, and newer generated timestamps")
+        Then("only equal or newer relevant inputs cause the runtime classpath to be exported")
+        developmentClasspathRefreshesOnlyForRelevantInputs()
       }
 
     }
@@ -633,6 +659,51 @@ final class CozyLauncherSpec extends AnyWordSpec with Matchers with GivenWhenThe
     _assert_equals(invoker.lastArgs, Vector("sbt-bridge", "v1"))
   }
 
+  def projectYamlRuntimeSelectionOverridesSwitchableDevelopmentRuntime(): Unit = _with_temp_paths { paths =>
+    Given("a global launcher config enables launcher and runtime development candidates")
+    _write(paths.cozyHome.resolve("launcher.yaml"),
+      """development:
+        |  enabled: true
+        |  launcher:
+        |    dev-dir: ../candidate-launcher
+        |  runtime:
+        |    dev-dir: ../candidate-runtime
+        |""".stripMargin)
+    _write(paths.cwd.resolve("project.yaml"),
+      """build:
+        |  cozyVersion: "0.3.1"
+        |""".stripMargin)
+
+    When("the launcher loads the project runtime selection")
+    val environment = Map("COZY_LAUNCHER_DEV_DELEGATED" -> "1")
+    val config = LauncherConfig.load(paths, Vector.empty, environment)
+
+    Then("the declaration selects 0.3.1 and suppresses the switchable runtime checkout")
+    _assert_equals(config.runtimeVersion, Some("0.3.1"))
+    _assert_equals(config.runtimeDevDir, None)
+
+    Given("the launcher is delegated past the selected development launcher checkout")
+    val resolver = FakeResolver()
+    val invoker = FakeInvoker()
+    val runtimedevinvoker = FakeRuntimeDevInvoker()
+    val launcher = new CozyLauncher(paths, resolver, invoker, FakeLauncherDevInvoker(), runtimedevinvoker, environment)
+
+    When("the launcher executes sbt-bridge v1")
+    launcher.run(Vector("sbt-bridge", "v1"))
+
+    Then("the published declared runtime resolves and the runtime checkout is not invoked")
+    _assert_equals(resolver.resolvedClasspaths, Vector("0.3.1"))
+    _assert_equals(invoker.lastArgs, Vector("sbt-bridge", "v1"))
+    _assert_equals(runtimedevinvoker.devDir, None)
+    _assert_equals(runtimedevinvoker.args, Vector.empty)
+
+    When("an explicit runtime environment version is supplied")
+    val overridden = LauncherConfig.load(paths, Vector.empty, environment + ("COZY_RUNTIME_VERSION" -> "0.3.2"))
+
+    Then("the explicit runtime environment version overrides the project declaration")
+    _assert_equals(overridden.runtimeVersion, Some("0.3.2"))
+  }
+
   def runtimeUseWritesExpectedFiles(): Unit = _with_temp_paths { paths =>
     val launcher = new CozyLauncher(paths, FakeResolver(), FakeInvoker())
     launcher.run(Vector("runtime", "use", "0.2.20-SNAPSHOT", "--global"))
@@ -668,6 +739,124 @@ final class CozyLauncherSpec extends AnyWordSpec with Matchers with GivenWhenThe
     _assert_equals(invoker.lastArgs, Vector.empty)
     _assert_equals(devinvoker.devDir, Some(paths.cwd.resolve("../cozy").normalize.toAbsolutePath.normalize))
     _assert_equals(devinvoker.args, Vector("sbt-bridge", "v1", "--request", "/tmp/request.json"))
+  }
+
+  def executeExplicitRuntimeVersionOverridesConfiguredDevelopmentRuntime(): Unit = _with_temp_paths { paths =>
+    Given("a global launcher config enables a runtime development candidate")
+    _write(paths.cozyHome.resolve("launcher.yaml"),
+      """development:
+        |  enabled: false
+        |  runtime:
+        |    enabled: true
+        |    dev-dir: ../candidate-runtime
+        |""".stripMargin)
+
+    val resolver = FakeResolver()
+    val invoker = FakeInvoker()
+    val devinvoker = FakeRuntimeDevInvoker()
+    val launcher = new CozyLauncher(paths, resolver, invoker, FakeLauncherDevInvoker(), devinvoker)
+
+    When("the launcher executes with an explicit runtime version")
+    launcher.run(Vector("--runtime", "0.3.2-SNAPSHOT", "sbt-bridge", "v1"))
+
+    Then("the requested published runtime resolves and the candidate checkout is not invoked")
+    _assert_equals(resolver.resolvedClasspaths, Vector("0.3.2-SNAPSHOT"))
+    _assert_equals(invoker.lastArgs, Vector("sbt-bridge", "v1"))
+    _assert_equals(devinvoker.devDir, None)
+    _assert_equals(devinvoker.args, Vector.empty)
+
+    Given("a direct runtime.dev-dir and switchable development runtime are configured")
+    _write(paths.cozyHome.resolve("launcher.yaml"),
+      """runtime:
+        |  dev-dir: ../direct-runtime
+        |development:
+        |  enabled: false
+        |  runtime:
+        |    enabled: true
+        |    dev-dir: ../candidate-runtime
+        |""".stripMargin)
+    val directresolver = FakeResolver()
+    val directinvoker = FakeInvoker()
+    val directdevinvoker = FakeRuntimeDevInvoker()
+    val directenvironment = Map("COZY_LAUNCHER_DEV_DELEGATED" -> "1")
+    val directlauncher = new CozyLauncher(
+      paths,
+      directresolver,
+      directinvoker,
+      FakeLauncherDevInvoker(),
+      directdevinvoker,
+      directenvironment
+    )
+
+    When("the launcher executes with an explicit runtime version")
+    directlauncher.run(Vector("--runtime", "0.3.2-SNAPSHOT", "sbt-bridge", "v1"))
+
+    Then("the explicit runtime version bypasses direct and switchable checkout selectors")
+    _assert_equals(directresolver.resolvedClasspaths, Vector("0.3.2-SNAPSHOT"))
+    _assert_equals(directinvoker.lastArgs, Vector("sbt-bridge", "v1"))
+    _assert_equals(directdevinvoker.devDir, None)
+    _assert_equals(directdevinvoker.args, Vector.empty)
+
+    Given("a runtime environment checkout selector and switchable development runtime are configured")
+    _write(paths.cozyHome.resolve("launcher.yaml"),
+      """development:
+        |  enabled: false
+        |  runtime:
+        |    enabled: true
+        |    dev-dir: ../candidate-runtime
+        |""".stripMargin)
+    val environmentresolver = FakeResolver()
+    val environmentinvoker = FakeInvoker()
+    val environmentdevinvoker = FakeRuntimeDevInvoker()
+    val environment = Map(
+      "COZY_LAUNCHER_DEV_DELEGATED" -> "1",
+      "COZY_RUNTIME_DEV_DIR" -> "../environment-runtime"
+    )
+    val environmentlauncher = new CozyLauncher(
+      paths,
+      environmentresolver,
+      environmentinvoker,
+      FakeLauncherDevInvoker(),
+      environmentdevinvoker,
+      environment
+    )
+
+    When("the launcher executes with an explicit runtime version")
+    environmentlauncher.run(Vector("--runtime", "0.3.2-SNAPSHOT", "sbt-bridge", "v1"))
+
+    Then("the explicit runtime version bypasses the environment checkout selector")
+    _assert_equals(environmentresolver.resolvedClasspaths, Vector("0.3.2-SNAPSHOT"))
+    _assert_equals(environmentinvoker.lastArgs, Vector("sbt-bridge", "v1"))
+    _assert_equals(environmentdevinvoker.devDir, None)
+    _assert_equals(environmentdevinvoker.args, Vector.empty)
+
+    Given("both explicit runtime selectors are supplied")
+    val explicitresolver = FakeResolver()
+    val explicitinvoker = FakeInvoker()
+    val explicitdevinvoker = FakeRuntimeDevInvoker()
+    val explicitlauncher = new CozyLauncher(
+      paths,
+      explicitresolver,
+      explicitinvoker,
+      FakeLauncherDevInvoker(),
+      explicitdevinvoker
+    )
+
+    When("the launcher executes with an explicit runtime development directory")
+    explicitlauncher.run(Vector(
+      "--runtime", "0.3.2-SNAPSHOT",
+      "--runtime-dev-dir", "../explicit-runtime",
+      "sbt-bridge", "v1"
+    ))
+
+    Then("the explicit development directory wins over the runtime version")
+    _assert_equals(explicitresolver.resolvedClasspaths, Vector.empty)
+    _assert_equals(explicitinvoker.lastArgs, Vector.empty)
+    _assert_equals(
+      explicitdevinvoker.devDir,
+      Some(paths.cwd.resolve("../explicit-runtime").normalize.toAbsolutePath.normalize)
+    )
+    _assert_equals(explicitdevinvoker.args, Vector("sbt-bridge", "v1"))
   }
 
   def executeUsesConfiguredRuntimeDevelopmentDirectory(): Unit = _with_temp_paths { paths =>
@@ -708,6 +897,79 @@ final class CozyLauncherSpec extends AnyWordSpec with Matchers with GivenWhenThe
     source.contains("export Runtime / fullClasspath") shouldBe true
   }
 
+  def developmentClasspathRefreshesOnlyForRelevantInputs(): Unit = {
+    val basetime = FileTime.fromMillis(1_800_000_000_000L)
+    val oldtime = FileTime.fromMillis(basetime.toMillis - 1000L)
+    val newtime = FileTime.fromMillis(basetime.toMillis + 1000L)
+
+    Given("a build.sbt input with the same timestamp as its cached classpath")
+    val equalproject = _development_project()
+    val equalcache = DevelopmentClasspath.classpathFile(equalproject)
+    _write(equalcache, equalproject.resolve("cached.jar").toString)
+    Files.setLastModifiedTime(equalcache, basetime)
+    Files.setLastModifiedTime(equalproject.resolve("build.sbt"), basetime)
+    val equalexporter = FakeRuntimeClasspathExporter(equalproject.resolve("exported.jar").toString)
+
+    When("the development classpath is requested")
+    val equalclasspath = DevelopmentClasspath.classpath(equalproject, equalexporter)
+
+    Then("the equal timestamp invalidates the cache")
+    equalexporter.exportCount shouldBe 1
+    equalclasspath shouldBe Vector(equalproject.resolve("exported.jar"))
+
+    Given("a project definition newer than its cached classpath")
+    val projectinput = _development_project()
+    val projectcache = DevelopmentClasspath.classpathFile(projectinput)
+    _write(projectcache, projectinput.resolve("cached.jar").toString)
+    Files.setLastModifiedTime(projectinput.resolve("build.sbt"), oldtime)
+    Files.setLastModifiedTime(projectinput.resolve("src/main/scala/Main.scala"), oldtime)
+    Files.setLastModifiedTime(projectcache, basetime)
+    Files.setLastModifiedTime(projectinput.resolve("project/plugins.sbt"), newtime)
+    val projectexporter = FakeRuntimeClasspathExporter(projectinput.resolve("exported.jar").toString)
+
+    When("the development classpath is requested")
+    DevelopmentClasspath.classpath(projectinput, projectexporter)
+
+    Then("the project input invalidates the cache")
+    projectexporter.exportCount shouldBe 1
+
+    Given("a runtime source newer than its cached classpath")
+    val sourceproject = _development_project()
+    val sourcecache = DevelopmentClasspath.classpathFile(sourceproject)
+    _write(sourcecache, sourceproject.resolve("cached.jar").toString)
+    Files.setLastModifiedTime(sourceproject.resolve("build.sbt"), oldtime)
+    Files.setLastModifiedTime(sourceproject.resolve("project/plugins.sbt"), oldtime)
+    Files.setLastModifiedTime(sourcecache, basetime)
+    Files.setLastModifiedTime(sourceproject.resolve("src/main/scala/Main.scala"), newtime)
+    val sourceexporter = FakeRuntimeClasspathExporter(sourceproject.resolve("exported.jar").toString)
+
+    When("the development classpath is requested")
+    DevelopmentClasspath.classpath(sourceproject, sourceexporter)
+
+    Then("the runtime source invalidates the cache")
+    sourceexporter.exportCount shouldBe 1
+
+    Given("only a generated build-directory file is newer than the cached classpath")
+    val generatedproject = _development_project()
+    val generatedcache = DevelopmentClasspath.classpathFile(generatedproject)
+    val generatedfile = generatedproject.resolve("src/main/target/Generated.scala")
+    _write(generatedcache, generatedproject.resolve("cached.jar").toString)
+    _write(generatedfile, "object Generated\n")
+    Files.setLastModifiedTime(generatedproject.resolve("build.sbt"), oldtime)
+    Files.setLastModifiedTime(generatedproject.resolve("project/plugins.sbt"), oldtime)
+    Files.setLastModifiedTime(generatedproject.resolve("src/main/scala/Main.scala"), oldtime)
+    Files.setLastModifiedTime(generatedcache, basetime)
+    Files.setLastModifiedTime(generatedfile, newtime)
+    val generatedexporter = FakeRuntimeClasspathExporter(generatedproject.resolve("exported.jar").toString)
+
+    When("the development classpath is requested")
+    val generatedclasspath = DevelopmentClasspath.classpath(generatedproject, generatedexporter)
+
+    Then("the generated file is ignored and the cached classpath is retained")
+    generatedexporter.exportCount shouldBe 0
+    generatedclasspath shouldBe Vector(generatedproject.resolve("cached.jar"))
+  }
+
   def noRuntimeLibraryDependencies(): Unit = {
     val lines = Files.readString(Path.of("build.sbt")).linesIterator.toVector.map(_.trim)
     def _runtime_library_dependency_(line: String): Boolean =
@@ -746,6 +1008,14 @@ final class CozyLauncherSpec extends AnyWordSpec with Matchers with GivenWhenThe
     Files.createDirectories(home)
     Files.createDirectories(cwd)
     f(LauncherPaths(home, cwd))
+  }
+
+  private def _development_project(): Path = {
+    val project = Files.createTempDirectory("cozy-launcher-development-classpath-spec-")
+    _write(project.resolve("build.sbt"), "ThisBuild / version := \"0.1.7-SNAPSHOT\"\n")
+    _write(project.resolve("project/plugins.sbt"), "// project input\n")
+    _write(project.resolve("src/main/scala/Main.scala"), "object Main\n")
+    project
   }
 
   private def _write(path: Path, value: String): Unit = {
@@ -852,4 +1122,17 @@ final class FakeRuntimeDevInvoker extends CozyRuntimeDevInvoker {
 
 object FakeRuntimeDevInvoker {
   def apply(): FakeRuntimeDevInvoker = new FakeRuntimeDevInvoker()
+}
+
+final class FakeRuntimeClasspathExporter(classpath: String) extends RuntimeClasspathExporter {
+  var exportCount: Int = 0
+
+  def exportRuntimeClasspath(project: Path): String = {
+    exportCount += 1
+    classpath
+  }
+}
+
+object FakeRuntimeClasspathExporter {
+  def apply(classpath: String): FakeRuntimeClasspathExporter = new FakeRuntimeClasspathExporter(classpath)
 }

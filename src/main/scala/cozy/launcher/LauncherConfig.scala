@@ -6,7 +6,8 @@ import org.goldenport.launcher.{LauncherConfigLoader => CoreLauncherConfigLoader
 
 /*
  * @since   Jun.  9, 2026
- * @version Jul. 13, 2026
+ *  version Jul. 13, 2026
+ * @version Aug. 20, 2026
  * @author  ASAMI, Tomoharu
  */
 final case class LauncherConfig(
@@ -138,8 +139,37 @@ object LauncherConfig {
       } catch {
         case e: LauncherCoreException => throw CozyException(e.getMessage, e.code)
       }
-    val withoverrides = explicit.mergeHigher(fromEnvironment(environment))
+    val projectselection =
+      try {
+        _project_runtime_selection(paths)
+      } catch {
+        case e: LauncherCoreException => throw CozyException(e.getMessage, e.code)
+      }
+    val withprojectselection = explicit.mergeHigher(projectselection)
+    val withoverrides = withprojectselection.mergeHigher(fromEnvironment(environment))
     withoverrides.withDevelopmentSelection.normalizedWithDefaults
+  }
+
+  private def _project_runtime_selection(paths: LauncherPaths): LauncherConfig =
+    _nearest_project_yaml(paths).flatMap { path =>
+      val values = CoreLauncherConfigParser.parse(path, Files.readString(path, StandardCharsets.UTF_8))
+      values.getOrElse("build.cozyVersion", Vector.empty).map(_.trim).find(_.nonEmpty)
+    }.fold(LauncherConfig()) { version =>
+      LauncherConfig(
+        runtimeVersion = Some(version),
+        developmentRuntimeEnabled = Some(false)
+      )
+    }
+
+  private def _nearest_project_yaml(paths: LauncherPaths): Option[Path] = {
+    val cwd = paths.cwd.toAbsolutePath.normalize
+    val home = paths.home.toAbsolutePath.normalize
+    Iterator.iterate(Option(cwd))(_.flatMap(p => Option(p.getParent))).
+      takeWhile(_.nonEmpty).
+      flatten.
+      takeWhile(p => p != home.getParent).
+      map(_.resolve("project.yaml")).
+      find(Files.isRegularFile(_))
   }
 
   def loadFile(path: Path): LauncherConfig =

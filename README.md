@@ -43,8 +43,38 @@ cozy --runtime-dev-dir /path/to/cozy sbt-bridge v1 --request /tmp/request.json
 
 `--runtime-dev-dir` bypasses Coursier runtime resolution, resolves the selected
 checkout's `Runtime / fullClasspath`, and invokes `cozy.Cozy` through java direct
-execution. sbt is used only to export the classpath when the cached
-`target/cozy.d/runtime-classpath.txt` is missing.
+execution. sbt exports the classpath when
+`target/cozy.d/runtime-classpath.txt` is missing or stale. The cache becomes
+stale when `build.sbt`, files under `project/**`, or runtime sources under
+`src/main/**` are as new as the cache; generated build directories are ignored.
+
+For a project declaring its Cozy build runtime, `project.yaml` is authoritative:
+
+```yaml
+build:
+  cozyVersion: "0.3.1"
+```
+
+The nearest `project.yaml` from the working directory through the launcher
+workspace boundary selects that published runtime. It overrides generic launcher
+`runtime.version` and suppresses only a switchable
+`development.runtime.dev-dir` candidate. It does not create or require a local
+`.cozy/launcher.yaml`.
+
+Execution selection precedence is:
+
+1. `--runtime-dev-dir` at invocation time.
+2. `--runtime` at invocation time.
+3. Configured checkout selectors: `COZY_RUNTIME_DEV_DIR`, direct
+   `runtime.dev-dir`, and the switchable `development.runtime.dev-dir` candidate.
+4. The `RuntimeVersionStore`-selected version. Its inputs retain their internal
+   precedence: explicit `COZY_RUNTIME_VERSION` or `COZY_VERSION`, the project's
+   `build.cozyVersion`, then ordinary launcher configuration and legacy version
+   selection.
+
+Configured checkout selectors apply only when neither CLI runtime selector is
+supplied, so machine-local checkout settings cannot shadow an explicit
+`--runtime`. When both CLI selectors are supplied, `--runtime-dev-dir` wins.
 
 ## Configuration
 
@@ -112,18 +142,20 @@ development:
 
 Section `enabled` values take precedence over `development.enabled`.
 
-Direct `launcher.dev-dir`, `runtime.dev-dir`, CLI development-directory options,
-and their direct environment equivalents remain explicit always-active
-overrides. In normal operation, `launcher.yaml` is the single place that
-controls development selection; CLI and environment overrides are reserved for
-explicit emergency control. Use `development.*` for paths controlled by the
-file switch.
+Direct `launcher.dev-dir` controls launcher delegation. For runtime execution,
+the CLI selectors are ordered as described above; when neither is supplied,
+`COZY_RUNTIME_DEV_DIR`, direct `runtime.dev-dir`, and the switchable
+`development.runtime.dev-dir` candidate control checkout selection. In normal
+operation, `launcher.yaml` is the single place that controls development
+selection; CLI and environment overrides are reserved for explicit emergency
+control. Use `development.*` for paths controlled by the file switch.
 
 When an effective launcher or runtime development switch is `true`, its
 corresponding `dev-dir` is required. A direct environment directory also
 satisfies this configuration-time requirement; CLI options may override a valid
-selection when the command is processed. Missing directories fail during
-launcher configuration instead of silently selecting a published implementation.
+selection according to the execution precedence when the command is processed.
+Missing directories fail during launcher configuration instead of silently
+selecting a published implementation.
 
 `.cozy/config.yaml` remains Cozy build/publish configuration and is not read as
 launcher configuration.

@@ -9,7 +9,8 @@ import org.goldenport.launcher.{LauncherDevInvoker => CoreLauncherDevInvoker}
 
 /*
  * @since   Jun.  9, 2026
- * @version Jun. 27, 2026
+ *  version Jun. 27, 2026
+ * @version Aug. 20, 2026
  * @author  ASAMI, Tomoharu
  */
 trait CozyRuntimeResolver {
@@ -218,7 +219,7 @@ object SbtRuntimeClasspathExporter extends RuntimeClasspathExporter {
   }
 }
 
-private object DevelopmentClasspath {
+private[launcher] object DevelopmentClasspath {
   def classpathFile(project: Path): Path =
     project.resolve("target").resolve("cozy.d").resolve("runtime-classpath.txt")
 
@@ -244,25 +245,36 @@ private object DevelopmentClasspath {
 
   private def _is_stale(file: Path, project: Path): Boolean = {
     val generated = Files.getLastModifiedTime(file).toMillis
-    _build_inputs(project).exists(p => Files.getLastModifiedTime(p).toMillis > generated)
+    _build_inputs(project).exists(p => Files.getLastModifiedTime(p).toMillis >= generated)
   }
 
   private def _build_inputs(project: Path): Vector[Path] = {
     val root = project.resolve("build.sbt")
-    val projectdir = project.resolve("project")
-    val projectfiles =
-      if (Files.isDirectory(projectdir)) {
-        val stream = Files.list(projectdir)
-        try {
-          import scala.jdk.CollectionConverters.*
-          stream.iterator().asScala.toVector.filter(p => Files.isRegularFile(p) && p.getFileName.toString.endsWith(".sbt"))
-        } finally {
-          stream.close()
+    val buildfiles = _regular_files_under(project.resolve("project"))
+    val runtimefiles = _regular_files_under(project.resolve("src").resolve("main"))
+    (Vector(root).filter(Files.isRegularFile(_)) ++ buildfiles ++ runtimefiles).distinct
+  }
+
+  private def _regular_files_under(directory: Path): Vector[Path] =
+    if (Files.isDirectory(directory)) {
+      val stream = Files.walk(directory)
+      try {
+        import scala.jdk.CollectionConverters.*
+        stream.iterator().asScala.toVector.filter { path =>
+          Files.isRegularFile(path) && !_is_generated_build_path(path, directory)
         }
-      } else {
-        Vector.empty
+      } finally {
+        stream.close()
       }
-    (Vector(root).filter(Files.isRegularFile(_)) ++ projectfiles).distinct
+    } else {
+      Vector.empty
+    }
+
+  private def _is_generated_build_path(path: Path, root: Path): Boolean = {
+    import scala.jdk.CollectionConverters.*
+    root.relativize(path).iterator().asScala.exists { segment =>
+      Set("target", ".bloop", ".metals", ".scala-build").contains(segment.toString)
+    }
   }
 
   private def _classpath_to_paths(value: String): Vector[Path] =
