@@ -7,7 +7,7 @@ import org.goldenport.launcher.{LauncherConfigLoader => CoreLauncherConfigLoader
 /*
  * @since   Jun.  9, 2026
  *  version Jul. 13, 2026
- * @version Aug. 20, 2026
+ * @version Aug. 29, 2026
  * @author  ASAMI, Tomoharu
  */
 final case class LauncherConfig(

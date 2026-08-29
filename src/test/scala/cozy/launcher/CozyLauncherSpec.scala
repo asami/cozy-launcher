@@ -9,7 +9,7 @@ import java.nio.file.attribute.FileTime
 /*
  * @since   Jun.  9, 2026
  *  version Jul. 13, 2026
- * @version Aug. 20, 2026
+ * @version Aug. 29, 2026
  * @author  ASAMI, Tomoharu
  */
 object CozyLauncherSpec {
@@ -89,23 +89,14 @@ final class CozyLauncherSpec extends AnyWordSpec with Matchers with GivenWhenThe
       }
 
       "configuration file directories remain anchored to their sources" in {
-        Given("an ancestor launcher configuration declares relative checkout directories")
-        When("the launcher is invoked from its workspace root and a nested media package")
-        Then("each configuration-file candidate resolves from its declaring file and selects the same runtime")
         configFileDirectoriesRemainAnchoredToTheirSources()
       }
 
       "configuration file loaders anchor declared directories" in {
-        Given("an explicitly named launcher configuration declares relative checkout directories")
-        When("the optional and required file loaders parse it")
-        Then("both loaders retain the declaring file as the directory base")
         configFileLoadersAnchorDeclaredDirectories()
       }
 
       "absolute configuration file directories preserve declarations" in {
-        Given("a launcher configuration declares an absolute runtime checkout with dot segments and a trailing separator")
-        When("the configuration file loader reads the declaration")
-        Then("the configured runtime checkout retains its raw absolute declaration")
         absoluteConfigFileDirectoriesPreserveDeclarations()
       }
 
