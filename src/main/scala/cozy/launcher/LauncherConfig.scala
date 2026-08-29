@@ -2,7 +2,7 @@ package cozy.launcher
 
 import java.nio.charset.StandardCharsets
 import java.nio.file.{Files, Path}
-import org.goldenport.launcher.{LauncherConfigLoader => CoreLauncherConfigLoader, LauncherConfigParser => CoreLauncherConfigParser, LauncherCoreException, LauncherPaths => CoreLauncherPaths, LauncherProductSpec}
+import org.goldenport.launcher.{LauncherConfigLoader => CoreLauncherConfigLoader, LauncherConfigParser => CoreLauncherConfigParser, LauncherConfigSource => CoreLauncherConfigSource, LauncherCoreException, LauncherPaths => CoreLauncherPaths, LauncherProductSpec}
 
 /*
  * @since   Jun.  9, 2026
@@ -134,7 +134,7 @@ object LauncherConfig {
     val explicit =
       try {
         CoreLauncherConfigLoader.load(corepaths, _product_spec, configfiles).foldLeft(LauncherConfig()) { (acc, source) =>
-          acc.mergeHigher(fromParsed(source.values))
+          acc.mergeHigher(_from_config_source(source))
         }
       } catch {
         case e: LauncherCoreException => throw CozyException(e.getMessage, e.code)
@@ -175,7 +175,7 @@ object LauncherConfig {
   def loadFile(path: Path): LauncherConfig =
     if (Files.isRegularFile(path)) {
       val text = Files.readString(path, StandardCharsets.UTF_8)
-      fromParsed(LauncherConfigParser.parse(path, text))
+      _from_config_file(path, text)
     } else {
       LauncherConfig()
     }
@@ -220,6 +220,41 @@ object LauncherConfig {
       runtimeDevDir = _env_first(environment, "COZY_RUNTIME_DEV_DIR")
     )
   }
+
+  private def _from_config_source(source: CoreLauncherConfigSource): LauncherConfig =
+    _from_config_file(source.path, source.values)
+
+  private def _from_config_file(path: Path, text: String): LauncherConfig =
+    _from_config_file(path, LauncherConfigParser.parse(path, text))
+
+  private def _from_config_file(
+    path: Path,
+    values: Map[String, Vector[String]]
+  ): LauncherConfig =
+    _resolve_config_file_directories(fromParsed(values), path)
+
+  private def _resolve_config_file_directories(
+    config: LauncherConfig,
+    path: Path
+  ): LauncherConfig =
+    config.copy(
+      launcherDevDir = _resolve_config_file_directory(config.launcherDevDir, path),
+      runtimeDevDir = _resolve_config_file_directory(config.runtimeDevDir, path),
+      developmentLauncherDevDir = _resolve_config_file_directory(config.developmentLauncherDevDir, path),
+      developmentRuntimeDevDir = _resolve_config_file_directory(config.developmentRuntimeDevDir, path)
+    )
+
+  private def _resolve_config_file_directory(
+    value: Option[String],
+    path: Path
+  ): Option[String] =
+    value.map { raw =>
+      val configuredpath = Path.of(raw)
+      if (configuredpath.isAbsolute)
+        raw
+      else
+        path.toAbsolutePath.normalize.getParent.resolve(configuredpath).normalize.toString
+    }
 
   private def _env_first(environment: Map[String, String], keys: String*): Option[String] =
     keys.toVector.flatMap(k => environment.get(k)).headOption.map(_.trim).filter(_.nonEmpty)

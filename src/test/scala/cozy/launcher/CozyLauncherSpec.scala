@@ -23,6 +23,9 @@ object CozyLauncherSpec {
     spec.configMerge()
     spec.configFileOptionOverridesProjectConfig()
     spec.workspaceRootConfigAppliesToNestedCwd()
+    spec.configFileDirectoriesRemainAnchoredToTheirSources()
+    spec.configFileLoadersAnchorDeclaredDirectories()
+    spec.absoluteConfigFileDirectoriesPreserveDeclarations()
     spec.launcherConfigControlsDevelopmentRuntime()
     spec.launcherDevelopmentBootstrapUsesConfiguredRuntime()
     spec.runtimeCatalogSelection()
@@ -83,6 +86,27 @@ final class CozyLauncherSpec extends AnyWordSpec with Matchers with GivenWhenThe
         When("the launcher loads config from a nested scripted fixture directory")
         Then("the executable specification holds through inherited root config")
         workspaceRootConfigAppliesToNestedCwd()
+      }
+
+      "configuration file directories remain anchored to their sources" in {
+        Given("an ancestor launcher configuration declares relative checkout directories")
+        When("the launcher is invoked from its workspace root and a nested media package")
+        Then("each configuration-file candidate resolves from its declaring file and selects the same runtime")
+        configFileDirectoriesRemainAnchoredToTheirSources()
+      }
+
+      "configuration file loaders anchor declared directories" in {
+        Given("an explicitly named launcher configuration declares relative checkout directories")
+        When("the optional and required file loaders parse it")
+        Then("both loaders retain the declaring file as the directory base")
+        configFileLoadersAnchorDeclaredDirectories()
+      }
+
+      "absolute configuration file directories preserve declarations" in {
+        Given("a launcher configuration declares an absolute runtime checkout with dot segments and a trailing separator")
+        When("the configuration file loader reads the declaration")
+        Then("the configured runtime checkout retains its raw absolute declaration")
+        absoluteConfigFileDirectoriesPreserveDeclarations()
       }
 
       "execute uses configured runtime development directory" in {
@@ -273,7 +297,7 @@ final class CozyLauncherSpec extends AnyWordSpec with Matchers with GivenWhenThe
 
   def runtimeCurrentUsesDevelopmentRuntime(): Unit = _with_temp_paths { paths =>
     Given("a runtime development checkout declares its version in build.sbt")
-    val runtime = paths.cwd.resolve("../cozy-runtime").normalize
+    val runtime = paths.cwd.resolve(".cozy").resolve("../cozy-runtime").normalize
     _write(runtime.resolve("build.sbt"), "ThisBuild / version := \"9.9.9-SNAPSHOT\"\n")
     _write(paths.cwd.resolve(".cozy").resolve("launcher.yaml"), "runtime:\n  devDir: ../cozy-runtime\n")
     val launcher = new CozyLauncher(paths, FakeResolver(), FakeInvoker())
@@ -343,10 +367,10 @@ final class CozyLauncherSpec extends AnyWordSpec with Matchers with GivenWhenThe
         |  dev-dir: ../cozy
         |""".stripMargin)
     val config = LauncherConfig.load(paths)
-    _assert_equals(config.launcherDevDir, Some("../cozy-launcher"))
+    _assert_equals(config.launcherDevDir, Some(paths.cwd.resolve(".cozy").resolve("../cozy-launcher").normalize.toString))
     _assert_equals(config.runtimeVersion, Some("0.2.20-SNAPSHOT"))
     _assert_equals(config.runtimeCatalogUrl, Some("https://project.example/cozy/runtime-catalog.yaml"))
-    _assert_equals(config.runtimeDevDir, Some("../cozy"))
+    _assert_equals(config.runtimeDevDir, Some(paths.cwd.resolve(".cozy").resolve("../cozy").normalize.toString))
     config.mavenRepositories.contains("https://global.example/maven") shouldBe true
     config.coursierRepositories.contains("projectRepo") shouldBe true
     config.coursierRepositories.contains("ivy2Local") shouldBe true
@@ -379,7 +403,120 @@ final class CozyLauncherSpec extends AnyWordSpec with Matchers with GivenWhenThe
     val config = LauncherConfig.load(paths.withCwd(fixture))
 
     _assert_equals(config.runtimeVersion, Some("fixture"))
-    _assert_equals(config.runtimeDevDir, Some("../cozy-runtime"))
+    _assert_equals(config.runtimeDevDir, Some(workspace.resolve(".cozy").resolve("../cozy-runtime").normalize.toString))
+  }
+
+  def configFileDirectoriesRemainAnchoredToTheirSources(): Unit = _with_temp_paths { paths =>
+    Given("global and workspace configurations declare direct and switchable relative checkout directories")
+    val workspace = paths.cwd
+    val mediapackage = workspace.resolve("src/main/media/architecture/knowledgehub-component-architecture")
+    val globalconfigfile = paths.cozyHome.resolve("launcher.yaml")
+    val workspaceconfigfile = workspace.resolve(".cozy").resolve("launcher.yaml")
+    _write(globalconfigfile,
+      """cozy:
+        |  launcher:
+        |    dev:
+        |      dir: ../global-direct-launcher
+        |runtime:
+        |  dev-dir: ../global-direct-runtime
+        |development:
+        |  enabled: true
+        |  launcher:
+        |    dev-dir: ../global-switchable-launcher
+        |  runtime:
+        |    dev-dir: ../global-switchable-runtime
+        |""".stripMargin)
+    _write(workspaceconfigfile,
+      """runtime:
+        |  dev-dir: ../workspace-direct-runtime
+        |development:
+        |  runtime:
+        |    dev-dir: ../workspace-switchable-runtime
+        |""".stripMargin)
+    val expectedlauncher = globalconfigfile.getParent.resolve("../global-direct-launcher").normalize.toString
+    val expectedruntime = workspaceconfigfile.getParent.resolve("../workspace-direct-runtime").normalize.toString
+    val expectedswitchablelauncher = globalconfigfile.getParent.resolve("../global-switchable-launcher").normalize.toString
+    val expectedswitchableruntime = workspaceconfigfile.getParent.resolve("../workspace-switchable-runtime").normalize.toString
+
+    When("the root and nested media-package paths load the same ancestor configuration")
+    val rootconfig = LauncherConfig.load(paths, Vector.empty, Map.empty)
+    val nestedpaths = paths.withCwd(mediapackage)
+    val nestedconfig = LauncherConfig.load(nestedpaths, Vector.empty, Map.empty)
+
+    Then("higher selected and lower inherited candidates retain their declaring configuration-file bases")
+    _assert_equals(rootconfig.launcherDevDir, Some(expectedlauncher))
+    _assert_equals(rootconfig.runtimeDevDir, Some(expectedruntime))
+    _assert_equals(rootconfig.developmentLauncherDevDir, Some(expectedswitchablelauncher))
+    _assert_equals(rootconfig.developmentRuntimeDevDir, Some(expectedswitchableruntime))
+    _assert_equals(nestedconfig.launcherDevDir, Some(expectedlauncher))
+    _assert_equals(nestedconfig.runtimeDevDir, Some(expectedruntime))
+    _assert_equals(nestedconfig.developmentLauncherDevDir, Some(expectedswitchablelauncher))
+    _assert_equals(nestedconfig.developmentRuntimeDevDir, Some(expectedswitchableruntime))
+
+    Given("launcher development delegation is already complete for both runtime invocations")
+    val environment = Map("COZY_LAUNCHER_DEV_DELEGATED" -> "1")
+    val rootinvoker = FakeRuntimeDevInvoker()
+    val nestedinvoker = FakeRuntimeDevInvoker()
+    val rootlauncher = new CozyLauncher(paths, FakeResolver(), FakeInvoker(), FakeLauncherDevInvoker(), rootinvoker, environment)
+    val nestedlauncher = new CozyLauncher(nestedpaths, FakeResolver(), FakeInvoker(), FakeLauncherDevInvoker(), nestedinvoker, environment)
+
+    When("both locations execute the same Cozy runtime command")
+    rootlauncher.run(Vector("sbt-bridge", "v1"))
+    nestedlauncher.run(Vector("sbt-bridge", "v1"))
+
+    Then("both invocations select the same configured Cozy checkout")
+    _assert_equals(rootinvoker.devDir, Some(Path.of(expectedruntime)))
+    _assert_equals(nestedinvoker.devDir, Some(Path.of(expectedruntime)))
+    _assert_equals(rootinvoker.args, Vector("sbt-bridge", "v1"))
+    _assert_equals(nestedinvoker.args, Vector("sbt-bridge", "v1"))
+  }
+
+  def configFileLoadersAnchorDeclaredDirectories(): Unit = _with_temp_paths { paths =>
+    Given("a standalone launcher configuration declares each supported relative checkout directory")
+    val configfile = paths.cwd.resolve("configuration").resolve("launcher.yaml")
+    _write(configfile,
+      """launcher:
+        |  dev-dir: ../direct-launcher
+        |runtime:
+        |  dev-dir: ../direct-runtime
+        |development:
+        |  launcher:
+        |    dev-dir: ../switchable-launcher
+        |  runtime:
+        |    dev-dir: ../switchable-runtime
+        |""".stripMargin)
+    val expectedlauncher = configfile.getParent.resolve("../direct-launcher").normalize.toString
+    val expectedruntime = configfile.getParent.resolve("../direct-runtime").normalize.toString
+    val expectedswitchablelauncher = configfile.getParent.resolve("../switchable-launcher").normalize.toString
+    val expectedswitchableruntime = configfile.getParent.resolve("../switchable-runtime").normalize.toString
+
+    When("the optional and required configuration file loaders parse the declaration")
+    val optional = LauncherConfig.loadFile(configfile)
+    val required = LauncherConfig.loadRequiredFile(configfile)
+
+    Then("both loaders anchor direct and switchable checkout directories to the configuration file")
+    Vector(optional, required).foreach { config =>
+      _assert_equals(config.launcherDevDir, Some(expectedlauncher))
+      _assert_equals(config.runtimeDevDir, Some(expectedruntime))
+      _assert_equals(config.developmentLauncherDevDir, Some(expectedswitchablelauncher))
+      _assert_equals(config.developmentRuntimeDevDir, Some(expectedswitchableruntime))
+    }
+  }
+
+  def absoluteConfigFileDirectoriesPreserveDeclarations(): Unit = _with_temp_paths { paths =>
+    Given("a realistic absolute runtime checkout declaration includes a parent segment and a trailing separator")
+    val configfile = paths.cwd.resolve("configuration").resolve("launcher.yaml")
+    val absoluteruntime = paths.cwd.toAbsolutePath.toString + java.io.File.separator + "cozy" + java.io.File.separator + ".." + java.io.File.separator + "runtime" + java.io.File.separator
+    _write(configfile,
+      s"""runtime:
+        |  dev-dir: $absoluteruntime
+        |""".stripMargin)
+
+    When("the optional configuration file loader reads the declaration")
+    val config = LauncherConfig.loadFile(configfile)
+
+    Then("the absolute runtime checkout declaration is preserved exactly")
+    config.runtimeDevDir shouldBe Some(absoluteruntime)
   }
 
   def launcherConfigControlsDevelopmentRuntime(): Unit = _with_temp_paths { paths =>
@@ -400,8 +537,8 @@ final class CozyLauncherSpec extends AnyWordSpec with Matchers with GivenWhenThe
     _assert_equals(inert.developmentEnabled, Some(false))
     _assert_equals(inert.launcherDevDir, None)
     _assert_equals(inert.runtimeDevDir, None)
-    _assert_equals(inert.developmentLauncherDevDir, Some("../candidate-launcher"))
-    _assert_equals(inert.developmentRuntimeDevDir, Some("../candidate-runtime"))
+    _assert_equals(inert.developmentLauncherDevDir, Some(paths.cwd.resolve(".cozy").resolve("../candidate-launcher").normalize.toString))
+    _assert_equals(inert.developmentRuntimeDevDir, Some(paths.cwd.resolve(".cozy").resolve("../candidate-runtime").normalize.toString))
 
     When("development.enabled is changed to true in the same launcher config")
     _write(paths.cwd.resolve(".cozy").resolve("launcher.yaml"),
@@ -416,8 +553,8 @@ final class CozyLauncherSpec extends AnyWordSpec with Matchers with GivenWhenThe
 
     Then("the development launcher and runtime candidates become active")
     _assert_equals(active.developmentEnabled, Some(true))
-    _assert_equals(active.launcherDevDir, Some("../candidate-launcher"))
-    _assert_equals(active.runtimeDevDir, Some("../candidate-runtime"))
+    _assert_equals(active.launcherDevDir, Some(paths.cwd.resolve(".cozy").resolve("../candidate-launcher").normalize.toString))
+    _assert_equals(active.runtimeDevDir, Some(paths.cwd.resolve(".cozy").resolve("../candidate-runtime").normalize.toString))
 
     When("the launcher section enables only the development launcher")
     _write(paths.cwd.resolve(".cozy").resolve("launcher.yaml"),
@@ -433,7 +570,7 @@ final class CozyLauncherSpec extends AnyWordSpec with Matchers with GivenWhenThe
     val launcheronly = LauncherConfig.load(paths, Vector.empty, Map.empty)
 
     Then("the runtime remains published while the launcher delegates to its checkout")
-    _assert_equals(launcheronly.launcherDevDir, Some("../candidate-launcher"))
+    _assert_equals(launcheronly.launcherDevDir, Some(paths.cwd.resolve(".cozy").resolve("../candidate-launcher").normalize.toString))
     _assert_equals(launcheronly.runtimeDevDir, None)
 
     When("the runtime section enables only the development runtime")
@@ -451,7 +588,7 @@ final class CozyLauncherSpec extends AnyWordSpec with Matchers with GivenWhenThe
 
     Then("the installed launcher selects only the runtime checkout")
     _assert_equals(runtimeonly.launcherDevDir, None)
-    _assert_equals(runtimeonly.runtimeDevDir, Some("../candidate-runtime"))
+    _assert_equals(runtimeonly.runtimeDevDir, Some(paths.cwd.resolve(".cozy").resolve("../candidate-runtime").normalize.toString))
 
     Given("the launcher development switch is enabled without a candidate directory")
     _write(paths.cwd.resolve(".cozy").resolve("launcher.yaml"),
@@ -567,8 +704,8 @@ final class CozyLauncherSpec extends AnyWordSpec with Matchers with GivenWhenThe
     val bootstrap = LauncherConfig.load(paths, Vector.empty, Map.empty)
 
     Then("both configured development checkouts are active before delegation")
-    _assert_equals(bootstrap.launcherDevDir, Some("../candidate-launcher"))
-    _assert_equals(bootstrap.runtimeDevDir, Some("../candidate-runtime"))
+    _assert_equals(bootstrap.launcherDevDir, Some(paths.cwd.resolve(".cozy").resolve("../candidate-launcher").normalize.toString))
+    _assert_equals(bootstrap.runtimeDevDir, Some(paths.cwd.resolve(".cozy").resolve("../candidate-runtime").normalize.toString))
 
     When("the delegated development launcher executes a Cozy runtime command")
     val resolver = FakeResolver()
@@ -582,7 +719,7 @@ final class CozyLauncherSpec extends AnyWordSpec with Matchers with GivenWhenThe
     Then("the runtime command uses the configured runtime checkout without resolving a published runtime artifact")
     _assert_equals(resolver.resolvedClasspaths, Vector.empty)
     _assert_equals(invoker.lastArgs, Vector.empty)
-    _assert_equals(devinvoker.devDir, Some(paths.cwd.resolve("../candidate-runtime").normalize.toAbsolutePath.normalize))
+    _assert_equals(devinvoker.devDir, Some(paths.cwd.resolve(".cozy").resolve("../candidate-runtime").normalize.toAbsolutePath.normalize))
     _assert_equals(devinvoker.args, Vector("sbt-bridge", "v1"))
   }
 
@@ -868,7 +1005,7 @@ final class CozyLauncherSpec extends AnyWordSpec with Matchers with GivenWhenThe
     launcher.run(Vector("sbt-bridge", "v1"))
     _assert_equals(resolver.resolvedClasspaths, Vector.empty)
     _assert_equals(invoker.lastArgs, Vector.empty)
-    _assert_equals(devinvoker.devDir, Some(paths.cwd.resolve("../cozy").normalize.toAbsolutePath.normalize))
+    _assert_equals(devinvoker.devDir, Some(paths.cwd.resolve(".cozy").resolve("../cozy").normalize.toAbsolutePath.normalize))
     _assert_equals(devinvoker.args, Vector("sbt-bridge", "v1"))
   }
 
@@ -882,7 +1019,7 @@ final class CozyLauncherSpec extends AnyWordSpec with Matchers with GivenWhenThe
     val invoker = FakeLauncherDevInvoker()
     val launcher = new CozyLauncher(paths, FakeResolver(), FakeInvoker(), invoker)
     launcher.run(Vector("launcher", "version"))
-    _assert_equals(invoker.devDir, Some(paths.cwd.resolve("../launcher").normalize.toAbsolutePath.normalize))
+    _assert_equals(invoker.devDir, Some(paths.cwd.resolve(".cozy").resolve("../launcher").normalize.toAbsolutePath.normalize))
     _assert_equals(invoker.args, Vector("launcher", "version"))
   }
 

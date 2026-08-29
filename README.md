@@ -92,6 +92,15 @@ tests keep one root `.cozy/launcher.yaml` for nested sample and fixture
 directories. A nested directory can still override the inherited settings with
 its own `conf/cozy/launcher.yaml` or `.cozy/launcher.yaml`.
 
+Relative `launcher.dev-dir`, `runtime.dev-dir`,
+`development.launcher.dev-dir`, and `development.runtime.dev-dir` values in a
+`launcher.yaml` are resolved from the directory that contains that particular
+configuration file. This keeps an inherited workspace declaration stable when
+the command is invoked from a nested package directory. Absolute declaration
+paths remain unchanged. In contrast, the explicit invocation selectors
+`--runtime-dev-dir`, `COZY_RUNTIME_DEV_DIR`, and `COZY_LAUNCHER_DEV_DIR` retain
+their invocation-CWD-relative behavior.
+
 `conf/cozy/launcher.yaml` is shared launcher configuration when it is intentionally public.
 `.cozy/launcher.yaml` is a local sensitive launcher/runtime override and should normally be git-ignored.
 Normal Cozy/BoK operation settings belong in `conf/cozy/config.yaml`; local sensitive operation overrides belong in `.cozy/config.yaml`.
