@@ -9,7 +9,7 @@ import java.nio.file.attribute.FileTime
 /*
  * @since   Jun.  9, 2026
  *  version Jul. 13, 2026
- * @version Aug. 29, 2026
+ * @version Aug. 30, 2026
  * @author  ASAMI, Tomoharu
  */
 object CozyLauncherSpec {
@@ -29,6 +29,7 @@ object CozyLauncherSpec {
     spec.launcherConfigControlsDevelopmentRuntime()
     spec.launcherDevelopmentBootstrapUsesConfiguredRuntime()
     spec.runtimeCatalogSelection()
+    spec.runtimeSnapshotClasspathRefreshesButReleaseRemainsCached()
     spec.runtimeCatalogCommands()
     spec.runtimeCurrentWarnsWhenCachedRecommendedIsStale()
     spec.runtimeVersionPrecedence()
@@ -151,6 +152,13 @@ final class CozyLauncherSpec extends AnyWordSpec with Matchers with GivenWhenThe
         When("the launcher behavior is exercised")
         Then("the executable specification holds through scenario-specific expectations")
         runtimeCatalogSelection()
+      }
+
+      "snapshot runtime classpaths are refreshed while release classpaths remain cached" in {
+        Given("a stale snapshot runtime classpath and a cached release runtime classpath")
+        When("the resolver resolves both concrete runtime versions")
+        Then("the snapshot is fetched again while the release cache is retained")
+        runtimeSnapshotClasspathRefreshesButReleaseRemainsCached()
       }
 
       "runtime catalog commands" in {
@@ -726,6 +734,36 @@ final class CozyLauncherSpec extends AnyWordSpec with Matchers with GivenWhenThe
     _assert_equals(resolver.resolveVersion("newest", config, paths), "0.2.21-SNAPSHOT")
   }
 
+  def runtimeSnapshotClasspathRefreshesButReleaseRemainsCached(): Unit = _with_temp_paths { paths =>
+    val snapshotversion = "0.3.3-SNAPSHOT"
+    val releaseversion = "0.3.2"
+    val stalecached = paths.cwd.resolve("simplemodeler-1.1.25.jar")
+    val freshlyfetched = paths.cwd.resolve("simplemodeler-1.1.26-SNAPSHOT.jar")
+    val releasecached = paths.cwd.resolve("cozy-0.3.2.jar")
+    val snapshotmetadata = paths.runtimeRoot.resolve(snapshotversion).resolve("classpath.txt")
+    val releasemetadata = paths.runtimeRoot.resolve(releaseversion).resolve("classpath.txt")
+    val catalogfile = paths.cwd.resolve("runtime-catalog.yaml")
+    _write(snapshotmetadata, stalecached.toString + "\n")
+    _write(releasemetadata, releasecached.toString + "\n")
+    _write(catalogfile, _catalog_text)
+    val resolver = CoursierCozyRuntimeResolver(_coursier_fetch_script(paths.cwd, freshlyfetched))
+    val config = LauncherConfig(runtimeCatalogUrl = Some(catalogfile.toString))
+
+    When("the resolver resolves a snapshot whose persisted classpath is stale")
+    val snapshotclasspath = resolver.resolve(snapshotversion, config, paths)
+
+    Then("the resolver fetches and replaces the snapshot classpath")
+    snapshotclasspath shouldBe Vector(freshlyfetched)
+    Files.readString(snapshotmetadata).trim shouldBe freshlyfetched.toString
+
+    When("the resolver resolves an immutable release whose classpath is cached")
+    val releaseclasspath = resolver.resolve(releaseversion, config, paths)
+
+    Then("the release classpath remains reusable without fetching")
+    releaseclasspath shouldBe Vector(releasecached)
+    Files.readString(releasemetadata).trim shouldBe releasecached.toString
+  }
+
   def runtimeCatalogCommands(): Unit = _with_temp_paths { paths =>
     val catalogfile = paths.cwd.resolve("runtime-catalog.yaml")
     _write(catalogfile, _catalog_text)
@@ -1149,6 +1187,13 @@ final class CozyLauncherSpec extends AnyWordSpec with Matchers with GivenWhenThe
   private def _write(path: Path, value: String): Unit = {
     Files.createDirectories(path.getParent)
     Files.writeString(path, value)
+  }
+
+  private def _coursier_fetch_script(directory: Path, classpath: Path): String = {
+    val script = directory.resolve("fake-coursier")
+    _write(script, s"#!/bin/sh\nprintf '%s\\n' '${classpath}'\n")
+    script.toFile.setExecutable(true) shouldBe true
+    script.toString
   }
 
   private def _assert_equals[A](actual: A, expected: A): Unit =

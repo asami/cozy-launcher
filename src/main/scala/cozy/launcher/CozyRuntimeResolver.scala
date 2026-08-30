@@ -10,7 +10,7 @@ import org.goldenport.launcher.{LauncherDevInvoker => CoreLauncherDevInvoker}
 /*
  * @since   Jun.  9, 2026
  *  version Jun. 27, 2026
- * @version Aug. 20, 2026
+ * @version Aug. 30, 2026
  * @author  ASAMI, Tomoharu
  */
 trait CozyRuntimeResolver {
@@ -44,7 +44,7 @@ final class CoursierCozyRuntimeResolver(
           _fallback_version(version, config)
       }
     val metadata = paths.runtimeRoot.resolve(concreteversion).resolve("classpath.txt")
-    if (Files.isRegularFile(metadata)) {
+    if (Files.isRegularFile(metadata) && !_is_mutable_runtime_version(concreteversion)) {
       _read_classpath(metadata)
     } else {
       Files.createDirectories(metadata.getParent)
@@ -114,6 +114,9 @@ final class CoursierCozyRuntimeResolver(
       case "recommended" | "latest" | "latest-stable" | "latest.release" | "latest-snapshot" | "newest" => true
       case _ => false
     }
+
+  private def _is_mutable_runtime_version(version: String): Boolean =
+    version.endsWith("-SNAPSHOT")
 
   private def _newest(config: LauncherConfig): String =
     config.mavenRepositories.iterator.flatMap(_metadata_versions).nextOption()
