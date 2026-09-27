@@ -6,7 +6,8 @@ import java.nio.file.Files
 /*
  * @since   Jun.  9, 2026
  *  version Jun. 27, 2026
- * @version Aug. 20, 2026
+ *  version Aug. 20, 2026
+ * @version Sep. 27, 2026
  * @author  ASAMI, Tomoharu
  */
 final class CozyLauncher(
@@ -132,12 +133,16 @@ final class CozyLauncher(
     catalogstore: RuntimeCatalogStore,
     config: LauncherConfig
   ): Int = {
-    config.runtimeDevDir match {
-      case Some(dir) =>
-        println(_development_runtime_version(paths.cwd.resolve(dir).normalize.toAbsolutePath.normalize))
+    val selector = store.current(None, config)
+    val declared = config.runtimeVersion.contains(selector) && !_is_dynamic_runtime_selector(selector)
+    val development =
+      if (declared) _matching_development_runtime(selector, config)
+      else config.runtimeDevDir.map(dir => paths.cwd.resolve(dir).normalize.toAbsolutePath.normalize)
+    development match {
+      case Some(path) =>
+        println(_development_runtime_version(path))
         0
       case None =>
-        val selector = store.current(None, config)
         val current = runtimeresolver.resolveVersion(selector, config, paths)
         println(current)
         _warn_if_runtime_catalog_is_stale(selector, current, catalogstore, config)
@@ -149,11 +154,17 @@ final class CozyLauncher(
     val build = project.resolve("build.sbt")
     if (!Files.isRegularFile(build))
       throw CozyException(s"Cozy runtime development directory has no build.sbt: ${project}")
-    val text = Files.readString(build, StandardCharsets.UTF_8)
-    val versionregex = """(?m)(?:ThisBuild\s*/\s*)?version\s*:=\s*"([^"\n]+)""".r
-    versionregex.findFirstMatchIn(text).map(_.group(1)).getOrElse(
-      throw CozyException(s"failed to read Cozy runtime development version from ${build}")
-    )
+    val metadata = project.resolve("target/cozy.d/runtime-version.txt")
+    if (Files.isRegularFile(metadata))
+      Option(Files.readString(metadata, StandardCharsets.UTF_8).trim).filter(_.nonEmpty).
+        getOrElse(throw CozyException(s"empty Cozy runtime development version: $metadata"))
+    else {
+      val text = Files.readString(build, StandardCharsets.UTF_8)
+      val versionregex = """(?m)(?:ThisBuild\s*/\s*)?version\s*:=\s*"([^"\n]+)""".r
+      versionregex.findFirstMatchIn(text).map(_.group(1)).getOrElse(
+        throw CozyException(s"failed to read Cozy runtime development version from ${build}; run cozyExportRuntimeClasspath in ${project}")
+      )
+    }
   }
 
   private def _warn_if_runtime_catalog_is_stale(
@@ -189,26 +200,64 @@ final class CozyLauncher(
     command.runtimeDevDir match {
       case Some(dir) =>
         val path = paths.cwd.resolve(dir).normalize.toAbsolutePath.normalize
+        command.runtimeVersion.foreach { version =>
+          val actual = _development_runtime_version(path)
+          if (actual != version)
+            throw CozyException(s"Cozy development checkout version mismatch: requested=$version actual=$actual checkout=$path")
+        }
         runtimeDevInvoker.invoke(path, command.args)
       case None =>
         command.runtimeVersion match {
           case Some(runtimeversion) =>
-            val classpath = runtimeresolver.resolve(runtimeversion, config, paths)
-            cozyinvoker.invoke(classpath, command.args)
+            _run_versioned_runtime(runtimeversion, command.args, config)
           case None =>
-            config.runtimeDevDir match {
-              case Some(dir) =>
-                val path = paths.cwd.resolve(dir).normalize.toAbsolutePath.normalize
-                runtimeDevInvoker.invoke(path, command.args)
-              case None =>
-                val store = RuntimeVersionStore(paths)
-                val runtimeversion = store.current(None, config)
-                val classpath = runtimeresolver.resolve(runtimeversion, config, paths)
-                cozyinvoker.invoke(classpath, command.args)
+            command.cncfVersion match {
+              case Some(cncfversion) =>
+                val version = RuntimeCatalogStore(paths).loadOrRefresh(config).
+                  getOrElse(throw CozyException("failed to load Cozy runtime catalog")).
+                  resolveForCncf(cncfversion).version
+                _run_versioned_runtime(version, command.args, config)
+              case None => _run_unversioned_runtime(command.args, config)
             }
         }
     }
   }
+
+  private def _run_unversioned_runtime(args: Vector[String], config: LauncherConfig): Int =
+    config.runtimeDevDir match {
+      case Some(dir) =>
+        val selected = RuntimeVersionStore(paths).current(None, config)
+        if (config.runtimeVersion.contains(selected) && !_is_dynamic_runtime_selector(selected))
+          _run_versioned_runtime(selected, args, config)
+        else {
+          val path = paths.cwd.resolve(dir).normalize.toAbsolutePath.normalize
+          runtimeDevInvoker.invoke(path, args)
+        }
+      case None =>
+        val store = RuntimeVersionStore(paths)
+        val runtimeversion = store.current(None, config)
+        _run_versioned_runtime(runtimeversion, args, config)
+    }
+
+  private def _run_versioned_runtime(
+    version: String,
+    args: Vector[String],
+    config: LauncherConfig
+  ): Int = {
+    _matching_development_runtime(version, config) match {
+      case Some(path) => runtimeDevInvoker.invoke(path, args)
+      case None =>
+        val classpath = runtimeresolver.resolve(version, config, paths)
+        cozyinvoker.invoke(classpath, args)
+    }
+  }
+
+  private def _matching_development_runtime(version: String, config: LauncherConfig): Option[java.nio.file.Path] =
+    if (version.endsWith("-SNAPSHOT"))
+      config.runtimeDevDir.map(dir => paths.cwd.resolve(dir).normalize.toAbsolutePath.normalize).
+        filter(path => Files.isRegularFile(path.resolve("build.sbt")) && _development_runtime_version(path) == version)
+    else
+      None
 
   private def _resolve_runtime_use_target(
     target: CozyCommand.RuntimeUseTarget

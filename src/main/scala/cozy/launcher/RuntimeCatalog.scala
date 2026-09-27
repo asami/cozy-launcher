@@ -7,7 +7,7 @@ import scala.util.Using
 
 /*
  * @since   Jun. 10, 2026
- * @version Jun. 10, 2026
+ * @version Sep. 27, 2026
  * @author  ASAMI, Tomoharu
  */
 final case class RuntimeCatalog(
@@ -45,6 +45,12 @@ final case class RuntimeCatalog(
       .lastOption
       .getOrElse(throw CozyException("runtime catalog does not contain an enabled runtime version"))
       .validated
+
+  def resolveForCncf(cncfVersion: String): RuntimeCatalogVersion =
+    versions.filter(v => v.status.forall(_ == "active") && v.cncfVersions.contains(cncfVersion)).
+      sortWith((left, right) => RuntimeCatalog.compareVersions(left.version, right.version) < 0).
+      lastOption.
+      getOrElse(throw CozyException(s"no proven Cozy runtime is cataloged for CNCF $cncfVersion; refresh the runtime catalog or select an exact Cozy runtime or development checkout"))
 
   def enabledVersions: Vector[RuntimeCatalogVersion] =
     versions.filterNot(_.status.contains("disabled"))
@@ -94,7 +100,8 @@ final case class RuntimeCatalogVersion(
   module: Option[String],
   publishedAt: Option[String],
   checksumUrl: Option[String],
-  metadataUrl: Option[String]
+  metadataUrl: Option[String],
+  cncfVersions: Vector[String] = Vector.empty
 ) {
   def validated: RuntimeCatalogVersion =
     status match {
@@ -120,11 +127,28 @@ final case class RuntimeCatalogVersion(
       Some(s"    module: $moduleCoordinate"),
       publishedAt.map(v => s"    publishedAt: $v"),
       checksumUrl.map(v => s"    checksumUrl: $v"),
-      metadataUrl.map(v => s"    metadataUrl: $v")
+      metadataUrl.map(v => s"    metadataUrl: $v"),
+      if (cncfVersions.nonEmpty) Some(s"    cncfVersions: ${cncfVersions.mkString(",")}") else None
     ).flatten
 }
 
 object RuntimeCatalog {
+  def compareVersions(left: String, right: String): Int = {
+    val leftparts = left.split("[.\\-+_]").toVector.filter(_.nonEmpty)
+    val rightparts = right.split("[.\\-+_]").toVector.filter(_.nonEmpty)
+    val length = math.max(leftparts.length, rightparts.length)
+    (0 until length).iterator.map { index =>
+      (leftparts.lift(index), rightparts.lift(index)) match {
+        case (Some(a), Some(b)) if a.forall(_.isDigit) && b.forall(_.isDigit) =>
+          BigInt(a).compare(BigInt(b))
+        case (Some(a), Some(b)) => a.compareToIgnoreCase(b)
+        case (Some(a), None) => if (a.forall(_.isDigit)) BigInt(a).signum else -1
+        case (None, Some(b)) => if (b.forall(_.isDigit)) -BigInt(b).signum else 1
+        case _ => 0
+      }
+    }.find(_ != 0).getOrElse(0)
+  }
+
   def parse(text: String): RuntimeCatalog = {
     var root = Map.empty[String, String]
     var lists = Map.empty[String, Vector[String]]
@@ -195,7 +219,8 @@ object RuntimeCatalog {
         module = values.get("module").filter(_.nonEmpty),
         publishedAt = values.get("publishedAt").filter(_.nonEmpty),
         checksumUrl = values.get("checksumUrl").filter(_.nonEmpty),
-        metadataUrl = values.get("metadataUrl").filter(_.nonEmpty)
+        metadataUrl = values.get("metadataUrl").filter(_.nonEmpty),
+        cncfVersions = values.get("cncfVersions").toVector.flatMap(_.split(',').toVector.map(_.trim).filter(_.nonEmpty))
       )
     }
 

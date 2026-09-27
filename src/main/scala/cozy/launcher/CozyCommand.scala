@@ -3,7 +3,8 @@ package cozy.launcher
 /*
  * @since   Jun.  9, 2026
  *  version Jul. 13, 2026
- * @version Aug. 20, 2026
+ *  version Aug. 20, 2026
+ * @version Sep. 27, 2026
  * @author  ASAMI, Tomoharu
  */
 sealed trait CozyCommand
@@ -12,7 +13,8 @@ object CozyCommand {
   final case class Execute(
     args: Vector[String],
     runtimeVersion: Option[String],
-    runtimeDevDir: Option[String]
+    runtimeDevDir: Option[String],
+    cncfVersion: Option[String] = None
   ) extends CozyCommand
 
   sealed trait Runtime extends CozyCommand
@@ -40,10 +42,10 @@ object CozyCommand {
 
 object CozyCommandParser {
   def parse(args: Vector[String]): CozyCommand = {
-    val (runtimeversion, runtimedevdir, rest) = _take_global_runtime(args)
+    val (runtimeversion, runtimedevdir, cncfversion, rest) = _take_global_runtime(args)
     rest match {
       case Vector("--version") | Vector("version") =>
-        CozyCommand.Execute(Vector("version"), runtimeversion, runtimedevdir)
+        CozyCommand.Execute(Vector("version"), runtimeversion, runtimedevdir, cncfversion)
       case Vector("launcher", "version") | Vector("launcher", "--version") =>
         CozyCommand.LauncherVersion
       case Vector("-h") | Vector("--help") | Vector("help") =>
@@ -53,14 +55,15 @@ object CozyCommandParser {
       case Vector("runtime", tail*) =>
         _parse_runtime(tail.toVector)
       case other =>
-        CozyCommand.Execute(other, runtimeversion, runtimedevdir)
+        CozyCommand.Execute(other, runtimeversion, runtimedevdir, cncfversion)
     }
   }
 
-  private def _take_global_runtime(args: Vector[String]): (Option[String], Option[String], Vector[String]) = {
+  private def _take_global_runtime(args: Vector[String]): (Option[String], Option[String], Option[String], Vector[String]) = {
     val out = Vector.newBuilder[String]
     var runtime: Option[String] = None
     var runtimedevdir: Option[String] = None
+    var cncfversion: Option[String] = None
     var passthrough = false
     var i = 0
     while (i < args.length) {
@@ -89,13 +92,21 @@ object CozyCommandParser {
           case x if x.startsWith("--runtime-dev-dir=") =>
             runtimedevdir = Some(x.stripPrefix("--runtime-dev-dir="))
             i += 1
+          case "--cozy-for-cncf" =>
+            if (i + 1 >= args.length)
+              throw CozyException("--cozy-for-cncf requires a value")
+            cncfversion = Some(args(i + 1))
+            i += 2
+          case x if x.startsWith("--cozy-for-cncf=") =>
+            cncfversion = Some(x.stripPrefix("--cozy-for-cncf="))
+            i += 1
           case x =>
             out += x
             i += 1
         }
       }
     }
-    (runtime, runtimedevdir, out.result())
+    (runtime, runtimedevdir, cncfversion, out.result())
   }
 
   private def _parse_runtime(args: Vector[String]): CozyCommand.Runtime =
@@ -122,7 +133,7 @@ object CozyCommandParser {
 
   val helpText: String =
     """Usage:
-      |  cozy [--runtime <version>] [--runtime-dev-dir <dir>] <cozy-args...>
+      |  cozy [--runtime <version>] [--runtime-dev-dir <dir>] [--cozy-for-cncf <version>] <cozy-args...>
       |  cozy version
       |  cozy --version
       |  cozy launcher version
@@ -145,16 +156,17 @@ object CozyCommandParser {
       |  The launcher selects a Cozy runtime from the runtime catalog, resolves it
       |  with Coursier, and invokes cozy.Cozy in the same JVM.
       |  --runtime-dev-dir <dir> runs cozy.Cozy from a local checkout classpath with java direct execution.
-      |  Config runtime.dev-dir is the configuration equivalent of --runtime-dev-dir.
+      |  --cozy-for-cncf <version> selects the newest cataloged proven Cozy runtime for that CNCF version when no exact Cozy runtime is specified.
+      |  Config runtime.dev-dir selects a checkout when no exact runtime is requested, or when its SNAPSHOT version matches the requested runtime.
       |  COZY_VERSION/COZY_RUNTIME_VERSION override the configured runtime version.
-      |  COZY_RUNTIME_DEV_DIR directly selects a local Cozy runtime checkout.
+      |  COZY_RUNTIME_DEV_DIR selects a local Cozy runtime checkout, subject to an explicit version match.
       |  COZY_LAUNCHER_DEV_DIR directly selects a local cozy-launcher checkout.
       |  Config development.enabled=true activates development.launcher.dev-dir and development.runtime.dev-dir.
       |  Config development.launcher.enabled and development.runtime.enabled override the common development switch independently.
       |  An enabled development selection requires its dev-dir unless a direct environment override supplies one.
       |  Config launcher.dev-dir is always active for launcher delegation; runtime.dev-dir and development.* runtime dev-dir values are configured checkout selectors.
-      |  project.yaml build.cozyVersion selects the project runtime and suppresses only the switchable development.runtime.dev-dir candidate.
-      |  Execution precedence: --runtime-dev-dir, then --runtime; without either CLI selector, configured checkout selectors (COZY_RUNTIME_DEV_DIR, runtime.dev-dir, and the switchable development runtime), then the RuntimeVersionStore-selected version.
+      |  project.yaml build.cozyVersion selects the project runtime; a matching SNAPSHOT development checkout may satisfy it.
+      |  Execution precedence: --runtime-dev-dir, then --runtime, then --cozy-for-cncf, then unversioned configured checkout selectors (COZY_RUNTIME_DEV_DIR, runtime.dev-dir, and the switchable development runtime), then the RuntimeVersionStore-selected version.
       |  RuntimeVersionStore inputs retain precedence: COZY_RUNTIME_VERSION/COZY_VERSION, project.yaml build.cozyVersion, then ordinary and legacy version configuration.
       |  Version selectors: recommended, latest, latest-stable, latest-snapshot, newest.
       |  Runtime catalog defaults to https://www.simplemodeling.org/repository/cozy/runtime-catalog.yaml.

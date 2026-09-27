@@ -26,6 +26,8 @@ def ensurePublishLocalAllowed(version: String): Unit = {
       "Use publish for public release versions.")
 }
 
+lazy val cozyExportRuntimeClasspath = taskKey[File]("Write the development runtime classpath before invoking cozy")
+
 publish / skip := {
   ensurePublishAllowed(version.value)
   false
@@ -69,6 +71,14 @@ lazy val root = (project in file("."))
       ))
     }.taskValue,
     Compile / mainClass := Some("cozy.launcher.CozyLauncherMain"),
+    cozyExportRuntimeClasspath := {
+      val file = target.value / "cozy.d" / "runtime-classpath.txt"
+      IO.createDirectory(file.getParentFile)
+      val classpath = (Runtime / fullClasspath).value.map(_.data.getAbsolutePath).mkString(java.io.File.pathSeparator)
+      IO.write(file, classpath + "\n")
+      IO.write(file.getParentFile / "runtime-version.txt", version.value + "\n")
+      file
+    },
     publishTo := {
       val repo = sys.env.get("SIMPLEMODELING_MAVEN_LOCAL")
         .map(file)

@@ -10,7 +10,8 @@ import org.goldenport.launcher.{LauncherDevInvoker => CoreLauncherDevInvoker}
 /*
  * @since   Jun.  9, 2026
  *  version Jun. 27, 2026
- * @version Aug. 30, 2026
+ *  version Aug. 30, 2026
+ * @version Sep. 27, 2026
  * @author  ASAMI, Tomoharu
  */
 trait CozyRuntimeResolver {
@@ -194,57 +195,25 @@ object CozyInvoker {
     new CozyInvoker()
 }
 
-trait RuntimeClasspathExporter {
-  def exportRuntimeClasspath(project: Path): String
-}
-
-object SbtRuntimeClasspathExporter extends RuntimeClasspathExporter {
-  private val _command = Vector(
-    "sbt",
-    "--batch",
-    "-Dsbt.server.autostart=false",
-    "-Dsbt.supershell=false",
-    "export Runtime / fullClasspath"
-  )
-
-  def exportRuntimeClasspath(project: Path): String = {
-    val out = new StringBuilder
-    val err = new StringBuilder
-    val code = Process(_command, project.toFile).
-      !(ProcessLogger(line => out.append(line).append("\n"), line => err.append(line).append("\n")))
-    if (code != 0)
-      throw CozyException(s"failed to resolve Runtime / fullClasspath for ${project}: ${err.toString.trim}", 2)
-    out.toString.linesIterator.
-      map(_.trim).
-      find(line => line.startsWith("/") && line.contains(File.pathSeparator)).
-      orElse(out.toString.linesIterator.map(_.trim).find(_.startsWith("/"))).
-      getOrElse(throw CozyException(s"failed to find classpath in sbt output for ${project}", 2))
-  }
-}
-
 private[launcher] object DevelopmentClasspath {
   def classpathFile(project: Path): Path =
     project.resolve("target").resolve("cozy.d").resolve("runtime-classpath.txt")
 
-  def classpath(project: Path, exporter: RuntimeClasspathExporter): Vector[Path] = {
+  def classpath(project: Path): Vector[Path] = {
     val file = classpathFile(project)
-    val text =
-      if (Files.isRegularFile(file) && Files.size(file) > 0L && !_is_stale(file, project))
-        Files.readString(file, StandardCharsets.UTF_8).trim
-      else {
-        val exported = exporter.exportRuntimeClasspath(project)
-        Files.createDirectories(file.getParent)
-        Files.writeString(file, exported + "\n", StandardCharsets.UTF_8)
-        exported
-      }
+    if (!Files.isRegularFile(file) || Files.size(file) == 0L)
+      throw CozyException(s"development classpath missing: ${file}. Run cozyExportRuntimeClasspath in ${project} before invoking cozy.", 2)
+    if (_is_stale(file, project))
+      throw CozyException(s"development classpath stale: ${file}. Run cozyExportRuntimeClasspath in ${project} before invoking cozy.", 2)
+    val text = Files.readString(file, StandardCharsets.UTF_8).trim
     val entries = _classpath_to_paths(text)
     if (entries.isEmpty)
       throw CozyException(s"Runtime / fullClasspath was empty for ${project}", 2)
     entries
   }
 
-  def classpathString(project: Path, exporter: RuntimeClasspathExporter): String =
-    classpath(project, exporter).map(_.toString).mkString(File.pathSeparator)
+  def classpathString(project: Path): String =
+    classpath(project).map(_.toString).mkString(File.pathSeparator)
 
   private def _is_stale(file: Path, project: Path): Boolean = {
     val generated = Files.getLastModifiedTime(file).toMillis
@@ -293,7 +262,7 @@ object LauncherDevInvoker {
     def invoke(devdir: Path, args: Vector[String]): Int = {
       if (!Files.isDirectory(devdir) || !Files.isRegularFile(devdir.resolve("build.sbt")))
         throw CozyException(s"cozy launcher development directory not found: ${devdir}")
-      val classpath = DevelopmentClasspath.classpathString(devdir, SbtRuntimeClasspathExporter)
+      val classpath = DevelopmentClasspath.classpathString(devdir)
       CoreLauncherDevInvoker.invokeJavaMain(
         productname = "cozy",
         devdir = devdir,
@@ -319,7 +288,7 @@ object CozyRuntimeDevInvoker {
     def invoke(devdir: Path, args: Vector[String]): Int = {
       if (!Files.isDirectory(devdir) || !Files.isRegularFile(devdir.resolve("build.sbt")))
         throw CozyException(s"cozy runtime development directory not found: ${devdir}")
-      _invoker.invoke(DevelopmentClasspath.classpath(devdir, SbtRuntimeClasspathExporter), args)
+      _invoker.invoke(DevelopmentClasspath.classpath(devdir), args)
     }
   }
 }

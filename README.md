@@ -35,6 +35,18 @@ Use `--runtime <version>` to override the selected runtime for one invocation:
 cozy --runtime 0.2.20-SNAPSHOT sbt-bridge v1 --request /tmp/request.json
 ```
 
+For a CAR/SAR build without an explicit Cozy version, select by its exact CNCF
+compile version:
+
+```bash
+cozy --cozy-for-cncf 0.5.2 sbt-bridge v1 --request /tmp/request.json
+```
+
+The catalog lists only evidence-proven compatible Cozy versions for this
+selector. The numerically newest active version wins; global `latest` is not
+used as a compatibility guess. A missing mapping fails closed. This launcher
+selector is distinct from the Cozy generator's `--cncf-version` argument.
+
 Use a local Cozy checkout while developing Cozy itself:
 
 ```bash
@@ -43,10 +55,15 @@ cozy --runtime-dev-dir /path/to/cozy sbt-bridge v1 --request /tmp/request.json
 
 `--runtime-dev-dir` bypasses Coursier runtime resolution, resolves the selected
 checkout's `Runtime / fullClasspath`, and invokes `cozy.Cozy` through java direct
-execution. sbt exports the classpath when
-`target/cozy.d/runtime-classpath.txt` is missing or stale. The cache becomes
+execution. Before invoking `cozy`, run the `cozyExportRuntimeClasspath` SBT task
+in the selected Cozy checkout. Run the same task in a development cozy-launcher
+checkout when `development.launcher.dev-dir` is enabled. The launcher stops with
+an error if `target/cozy.d/runtime-classpath.txt` is missing or stale; it never
+starts SBT to regenerate the file. The classpath becomes
 stale when `build.sbt`, files under `project/**`, or runtime sources under
 `src/main/**` are as new as the cache; generated build directories are ignored.
+The preparation task also writes `target/cozy.d/runtime-version.txt`, which
+binds an explicitly requested SNAPSHOT version to the selected checkout.
 
 For a project declaring its Cozy build runtime, `project.yaml` is authoritative:
 
@@ -56,25 +73,34 @@ build:
 ```
 
 The nearest `project.yaml` from the working directory through the launcher
-workspace boundary selects that published runtime. It overrides generic launcher
-`runtime.version` and suppresses only a switchable
-`development.runtime.dev-dir` candidate. It does not create or require a local
-`.cozy/launcher.yaml`.
+workspace boundary selects that runtime version. It overrides generic launcher
+`runtime.version` while retaining a configured development checkout as a
+candidate. A matching SNAPSHOT checkout runs directly; a mismatched checkout or
+a release version uses the declared artifact. It does not create or require a
+local `.cozy/launcher.yaml`.
 
 Execution selection precedence is:
 
 1. `--runtime-dev-dir` at invocation time.
-2. `--runtime` at invocation time.
-3. Configured checkout selectors: `COZY_RUNTIME_DEV_DIR`, direct
-   `runtime.dev-dir`, and the switchable `development.runtime.dev-dir` candidate.
-4. The `RuntimeVersionStore`-selected version. Its inputs retain their internal
+2. `--runtime` at invocation time. A configured development checkout is used
+   when it declares the same SNAPSHOT version; otherwise the requested artifact
+   is resolved.
+3. `--cozy-for-cncf` at invocation time selects the newest proven compatible
+   version. `sbt-cozy` passes `--runtime` instead when the project or build
+   declares an exact Cozy version.
+4. A declared concrete version, including `project.yaml build.cozyVersion`,
+   uses an exactly matching SNAPSHOT checkout or its requested artifact.
+5. Without a concrete version, configured checkout selectors:
+   `COZY_RUNTIME_DEV_DIR`, direct `runtime.dev-dir`, and the switchable
+   `development.runtime.dev-dir` candidate.
+6. Otherwise, the `RuntimeVersionStore`-selected version. Its inputs retain their internal
    precedence: explicit `COZY_RUNTIME_VERSION` or `COZY_VERSION`, the project's
    `build.cozyVersion`, then ordinary launcher configuration and legacy version
    selection.
 
-Configured checkout selectors apply only when neither CLI runtime selector is
-supplied, so machine-local checkout settings cannot shadow an explicit
-`--runtime`. When both CLI selectors are supplied, `--runtime-dev-dir` wins.
+Configured checkout selectors can satisfy an explicit `--runtime` only through
+an exact SNAPSHOT version match. A mismatch cannot shadow the requested
+runtime. When both CLI selectors are supplied, `--runtime-dev-dir` wins.
 
 ## Configuration
 
