@@ -10,7 +10,8 @@ import java.nio.file.attribute.FileTime
  * @since   Jun.  9, 2026
  *  version Jul. 13, 2026
  *  version Aug. 30, 2026
- * @version Sep. 27, 2026
+ *  version Sep. 27, 2026
+ * @version Oct.  5, 2026
  * @author  ASAMI, Tomoharu
  */
 object CozyLauncherSpec {
@@ -44,7 +45,7 @@ object CozyLauncherSpec {
     spec.executeUsesConfiguredRuntimeDevelopmentDirectory()
     spec.launcherDevDirDelegatesToDevelopmentLauncher()
     spec.developmentInvokersUseJavaDirect()
-    spec.developmentClasspathRequiresPreparedCurrentCache()
+    spec.developmentClasspathRequiresUsableEntries()
     spec.noRuntimeLibraryDependencies()
     println("CozyLauncherSpec: OK")
   }
@@ -246,11 +247,11 @@ final class CozyLauncherSpec extends AnyWordSpec with Matchers with GivenWhenThe
         developmentInvokersUseJavaDirect()
       }
 
-      "development classpath requires a prepared current cache" in {
+      "development classpath requires usable entries without timestamp gates" in {
         Given("missing or cached development classpaths and build, project, source, and generated inputs")
         When("the launcher evaluates missing, equal, newer relevant, and newer generated timestamps")
-        Then("missing or stale classpaths stop execution without launching sbt")
-        developmentClasspathRequiresPreparedCurrentCache()
+        Then("unusable classpaths stop execution while source timestamps do not")
+        developmentClasspathRequiresUsableEntries()
       }
 
     }
@@ -1071,7 +1072,9 @@ final class CozyLauncherSpec extends AnyWordSpec with Matchers with GivenWhenThe
     _assert_equals(environmentdevinvoker.devDir, None)
     _assert_equals(environmentdevinvoker.args, Vector.empty)
 
-    Given("both explicit runtime selectors are supplied")
+    Given("both explicit runtime selectors are supplied with a matching checkout version")
+    _write(paths.cwd.resolve("../explicit-runtime/build.sbt").normalize,
+      "ThisBuild / version := \"0.3.2-SNAPSHOT\"\n")
     val explicitresolver = FakeResolver()
     val explicitinvoker = FakeInvoker()
     val explicitdevinvoker = FakeRuntimeDevInvoker()
@@ -1090,7 +1093,7 @@ final class CozyLauncherSpec extends AnyWordSpec with Matchers with GivenWhenThe
       "sbt-bridge", "v1"
     ))
 
-    Then("the explicit development directory wins over the runtime version")
+    Then("the explicit development directory supplies the requested runtime version")
     _assert_equals(explicitresolver.resolvedClasspaths, Vector.empty)
     _assert_equals(explicitinvoker.lastArgs, Vector.empty)
     _assert_equals(
@@ -1172,9 +1175,8 @@ final class CozyLauncherSpec extends AnyWordSpec with Matchers with GivenWhenThe
     source.contains("SbtRuntimeClasspathExporter") shouldBe false
   }
 
-  def developmentClasspathRequiresPreparedCurrentCache(): Unit = {
+  def developmentClasspathRequiresUsableEntries(): Unit = {
     val basetime = FileTime.fromMillis(1_800_000_000_000L)
-    val oldtime = FileTime.fromMillis(basetime.toMillis - 1000L)
     val newtime = FileTime.fromMillis(basetime.toMillis + 1000L)
 
     Given("a development checkout without a prepared classpath")
@@ -1203,72 +1205,48 @@ final class CozyLauncherSpec extends AnyWordSpec with Matchers with GivenWhenThe
     Then("the launcher treats the empty file as missing")
     emptyerror.message should include("development classpath missing")
 
-    Given("a build.sbt input with the same timestamp as its cached classpath")
-    val equalproject = _development_project()
-    val equalcache = DevelopmentClasspath.classpathFile(equalproject)
-    _write(equalcache, equalproject.resolve("cached.jar").toString)
-    Files.setLastModifiedTime(equalcache, basetime)
-    Files.setLastModifiedTime(equalproject.resolve("build.sbt"), basetime)
+    Given("usable classpath entries and build/source inputs with equal or newer timestamps")
+    val project = _development_project()
+    val cache = DevelopmentClasspath.classpathFile(project)
+    val jar = project.resolve("dependency with spaces.jar")
+    val classes = project.resolve("target/classes")
+    _write(jar, "classpath fixture")
+    Files.createDirectories(classes)
+    val entries = Vector(classes, jar)
+    _write(cache, entries.mkString(java.io.File.pathSeparator) + "\n")
+    Files.setLastModifiedTime(cache, basetime)
+    val inputs = Vector("build.sbt", "project/plugins.sbt", "src/main/scala/Main.scala", "src/main/target/Generated.scala")
+    for (input <- inputs; time <- Vector(basetime, newtime)) {
+      _write(project.resolve(input), "updated input\n")
+      Files.setLastModifiedTime(project.resolve(input), time)
 
-    When("the development classpath is requested")
-    val equalerror = intercept[CozyException] {
-      DevelopmentClasspath.classpath(equalproject)
+      When(s"the classpath is requested after changing ${input}")
+      val resolved = DevelopmentClasspath.classpath(project)
+
+      Then("the existing list remains usable regardless of the input timestamp")
+      resolved shouldBe entries
     }
 
-    Then("the equal timestamp causes a stale-cache failure")
-    equalerror.message should include("development classpath stale")
-
-    Given("a project definition newer than its cached classpath")
-    val projectinput = _development_project()
-    val projectcache = DevelopmentClasspath.classpathFile(projectinput)
-    _write(projectcache, projectinput.resolve("cached.jar").toString)
-    Files.setLastModifiedTime(projectinput.resolve("build.sbt"), oldtime)
-    Files.setLastModifiedTime(projectinput.resolve("src/main/scala/Main.scala"), oldtime)
-    Files.setLastModifiedTime(projectcache, basetime)
-    Files.setLastModifiedTime(projectinput.resolve("project/plugins.sbt"), newtime)
+    Given("a listed dependency which has been removed")
+    Files.delete(jar)
 
     When("the development classpath is requested")
-    val projecterror = intercept[CozyException] {
-      DevelopmentClasspath.classpath(projectinput)
+    val unavailable = intercept[CozyException] { DevelopmentClasspath.classpath(project) }
+
+    Then("the launcher reports the unavailable reference rather than a source timestamp")
+    unavailable.message should include("development classpath entry unavailable")
+    unavailable.message should include(jar.toString)
+
+    Given("an empty component or invalid path in the prepared classpath")
+    for (invalid <- Vector(classes.toString + java.io.File.pathSeparator, "invalid\u0000path")) {
+      _write(cache, invalid)
+
+      When("the malformed classpath is requested")
+      val error = intercept[CozyException] { DevelopmentClasspath.classpath(project) }
+
+      Then("the launcher reports a classpath format error")
+      error.message should include("development classpath contains")
     }
-
-    Then("the project input causes a stale-cache failure")
-    projecterror.message should include("development classpath stale")
-
-    Given("a runtime source newer than its cached classpath")
-    val sourceproject = _development_project()
-    val sourcecache = DevelopmentClasspath.classpathFile(sourceproject)
-    _write(sourcecache, sourceproject.resolve("cached.jar").toString)
-    Files.setLastModifiedTime(sourceproject.resolve("build.sbt"), oldtime)
-    Files.setLastModifiedTime(sourceproject.resolve("project/plugins.sbt"), oldtime)
-    Files.setLastModifiedTime(sourcecache, basetime)
-    Files.setLastModifiedTime(sourceproject.resolve("src/main/scala/Main.scala"), newtime)
-
-    When("the development classpath is requested")
-    val sourceerror = intercept[CozyException] {
-      DevelopmentClasspath.classpath(sourceproject)
-    }
-
-    Then("the runtime source causes a stale-cache failure")
-    sourceerror.message should include("development classpath stale")
-
-    Given("only a generated build-directory file is newer than the cached classpath")
-    val generatedproject = _development_project()
-    val generatedcache = DevelopmentClasspath.classpathFile(generatedproject)
-    val generatedfile = generatedproject.resolve("src/main/target/Generated.scala")
-    _write(generatedcache, generatedproject.resolve("cached.jar").toString)
-    _write(generatedfile, "object Generated\n")
-    Files.setLastModifiedTime(generatedproject.resolve("build.sbt"), oldtime)
-    Files.setLastModifiedTime(generatedproject.resolve("project/plugins.sbt"), oldtime)
-    Files.setLastModifiedTime(generatedproject.resolve("src/main/scala/Main.scala"), oldtime)
-    Files.setLastModifiedTime(generatedcache, basetime)
-    Files.setLastModifiedTime(generatedfile, newtime)
-
-    When("the development classpath is requested")
-    val generatedclasspath = DevelopmentClasspath.classpath(generatedproject)
-
-    Then("the generated file is ignored and the cached classpath is retained")
-    generatedclasspath shouldBe Vector(generatedproject.resolve("cached.jar"))
   }
 
   def noRuntimeLibraryDependencies(): Unit = {

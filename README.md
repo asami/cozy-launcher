@@ -58,10 +58,12 @@ checkout's `Runtime / fullClasspath`, and invokes `cozy.Cozy` through java direc
 execution. Before invoking `cozy`, run the `cozyExportRuntimeClasspath` SBT task
 in the selected Cozy checkout. Run the same task in a development cozy-launcher
 checkout when `development.launcher.dev-dir` is enabled. The launcher stops with
-an error if `target/cozy.d/runtime-classpath.txt` is missing or stale; it never
-starts SBT to regenerate the file. The classpath becomes
-stale when `build.sbt`, files under `project/**`, or runtime sources under
-`src/main/**` are as new as the cache; generated build directories are ignored.
+an error if `target/cozy.d/runtime-classpath.txt` is missing, empty, malformed,
+or refers to unavailable files/directories; it never starts SBT to regenerate it.
+Source and build-definition timestamps do not invalidate the list of classpath
+entries. Compile changed code during development and run the export task when
+dependencies or classpath locations change. Startup checks do not determine
+whether compiled code incorporates the latest source edits.
 The preparation task also writes `target/cozy.d/runtime-version.txt`, which
 binds an explicitly requested SNAPSHOT version to the selected checkout.
 

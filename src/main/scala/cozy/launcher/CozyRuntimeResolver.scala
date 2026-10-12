@@ -2,7 +2,7 @@ package cozy.launcher
 
 import java.io.File
 import java.nio.charset.StandardCharsets
-import java.nio.file.{Files, Path}
+import java.nio.file.{Files, InvalidPathException, Path}
 import scala.sys.process.*
 import scala.util.Try
 import org.goldenport.launcher.{LauncherDevInvoker => CoreLauncherDevInvoker}
@@ -11,7 +11,8 @@ import org.goldenport.launcher.{LauncherDevInvoker => CoreLauncherDevInvoker}
  * @since   Jun.  9, 2026
  *  version Jun. 27, 2026
  *  version Aug. 30, 2026
- * @version Sep. 27, 2026
+ *  version Sep. 27, 2026
+ * @version Oct.  5, 2026
  * @author  ASAMI, Tomoharu
  */
 trait CozyRuntimeResolver {
@@ -203,54 +204,31 @@ private[launcher] object DevelopmentClasspath {
     val file = classpathFile(project)
     if (!Files.isRegularFile(file) || Files.size(file) == 0L)
       throw CozyException(s"development classpath missing: ${file}. Run cozyExportRuntimeClasspath in ${project} before invoking cozy.", 2)
-    if (_is_stale(file, project))
-      throw CozyException(s"development classpath stale: ${file}. Run cozyExportRuntimeClasspath in ${project} before invoking cozy.", 2)
     val text = Files.readString(file, StandardCharsets.UTF_8).trim
     val entries = _classpath_to_paths(text)
     if (entries.isEmpty)
       throw CozyException(s"Runtime / fullClasspath was empty for ${project}", 2)
+    entries.foreach { entry =>
+      if (!(Files.isRegularFile(entry) || Files.isDirectory(entry)) || !Files.isReadable(entry))
+        throw CozyException(s"development classpath entry unavailable: ${entry}. Run cozyExportRuntimeClasspath in ${project} before invoking cozy.", 2)
+    }
     entries
   }
 
   def classpathString(project: Path): String =
     classpath(project).map(_.toString).mkString(File.pathSeparator)
 
-  private def _is_stale(file: Path, project: Path): Boolean = {
-    val generated = Files.getLastModifiedTime(file).toMillis
-    _build_inputs(project).exists(p => Files.getLastModifiedTime(p).toMillis >= generated)
-  }
-
-  private def _build_inputs(project: Path): Vector[Path] = {
-    val root = project.resolve("build.sbt")
-    val buildfiles = _regular_files_under(project.resolve("project"))
-    val runtimefiles = _regular_files_under(project.resolve("src").resolve("main"))
-    (Vector(root).filter(Files.isRegularFile(_)) ++ buildfiles ++ runtimefiles).distinct
-  }
-
-  private def _regular_files_under(directory: Path): Vector[Path] =
-    if (Files.isDirectory(directory)) {
-      val stream = Files.walk(directory)
-      try {
-        import scala.jdk.CollectionConverters.*
-        stream.iterator().asScala.toVector.filter { path =>
-          Files.isRegularFile(path) && !_is_generated_build_path(path, directory)
-        }
-      } finally {
-        stream.close()
-      }
-    } else {
-      Vector.empty
-    }
-
-  private def _is_generated_build_path(path: Path, root: Path): Boolean = {
-    import scala.jdk.CollectionConverters.*
-    root.relativize(path).iterator().asScala.exists { segment =>
-      Set("target", ".bloop", ".metals", ".scala-build").contains(segment.toString)
-    }
-  }
-
   private def _classpath_to_paths(value: String): Vector[Path] =
-    value.split(File.pathSeparator).toVector.map(_.trim).filter(_.nonEmpty).map(Path.of(_))
+    if (value.isEmpty) Vector.empty
+    else value.split(File.pathSeparator, -1).toVector.map { entry =>
+      if (entry.trim.isEmpty)
+        throw CozyException("development classpath contains an empty entry", 2)
+      try Path.of(entry.trim)
+      catch {
+        case _: InvalidPathException =>
+          throw CozyException("development classpath contains an invalid path", 2)
+      }
+    }
 }
 
 trait LauncherDevInvoker {
